@@ -11,7 +11,6 @@
 #include "randutils.h"
 #include "pt-mbr.h"
 #include "strutils.h"
-#include "sysfs.h"
 
 #include "fdiskP.h"
 
@@ -68,7 +67,7 @@ struct fdisk_dos_label {
 /*
  * Partition types
  */
-static const struct fdisk_parttype dos_parttypes[] = {
+static struct fdisk_parttype dos_parttypes[] = {
 	#include "pt-mbr-partnames.h"
 };
 
@@ -528,13 +527,6 @@ static void read_extended(struct fdisk_context *cxt, size_t ext)
 	struct dos_partition *p, *q;
 	struct fdisk_dos_label *l = self_label(cxt);
 
-	if (fdisk_is_listonly(cxt) &&
-	    !sysfs_devno_is_wholedisk(fdisk_get_devno(cxt))) {
-		DBG(LABEL, ul_debug("DOS: unable to gather logical partition chain "
-				  "when running on a non-whole disk device."));
-		return;
-	}
-
 	l->ext_index = ext;
 	pex = self_pte(cxt, ext);
 	if (!pex) {
@@ -798,9 +790,9 @@ static void get_partition_table_geometry(struct fdisk_context *cxt,
 			unsigned int *ph, unsigned int *ps)
 {
 	unsigned char *bufp = cxt->firstsector;
-	struct { unsigned int c, h, o, v; } t[8] = { 0 };
+	struct { unsigned int c, h, o, v; } t[8];
 	unsigned int n1, n2, n3, n4, n5, n6;
-	const struct dos_partition *p;
+	struct dos_partition *p;
 	unsigned int c, h, s, l;
 	unsigned int hh, ss;
 	unsigned int sects;
@@ -1277,7 +1269,7 @@ static int add_partition(struct fdisk_context *cxt, size_t n,
 
 	DBG(LABEL, ul_debug("DOS: adding partition %zu", n));
 
-	sys = pa && pa->type ? pa->type->code : MBR_LINUX_DATA_PARTITION;
+	sys = pa && pa->type ? pa->type->code : MBR_W95_FAT32_LBA_PARTITION; // HACK: Fat32 as default!!
 	is_logical = n >= 4;
 
 	if (p && is_used_partition(p)) {
@@ -1735,21 +1727,13 @@ static int dos_verify_disklabel(struct fdisk_context *cxt)
 {
 	size_t i, j;
 	fdisk_sector_t total = 1, n_sectors = cxt->total_sectors;
-	fdisk_sector_t *first, *last;
+	fdisk_sector_t first[cxt->label->nparts_max],
+		       last[cxt->label->nparts_max];
 	struct dos_partition *p;
 	struct fdisk_dos_label *l = self_label(cxt);
 	int nerrors = 0;
 
 	assert(fdisk_is_label(cxt, DOS));
-
-	first = calloc(cxt->label->nparts_max, sizeof(*first));
-	last = calloc(cxt->label->nparts_max, sizeof(*first));
-
-	if (!first || !last) {
-		free(first);
-		free(last);
-		return -ENOMEM;
-	}
 
 	fill_bounds(cxt, first, last);
 	for (i = 0; i < cxt->label->nparts_max; i++) {
@@ -1834,8 +1818,6 @@ static int dos_verify_disklabel(struct fdisk_context *cxt)
 			P_("%d error detected.", "%d errors detected.", nerrors),
 			nerrors);
 
-	free(first);
-	free(last);
 	return nerrors;
 }
 
