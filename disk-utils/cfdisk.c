@@ -1318,7 +1318,7 @@ static char *get_mountpoint(struct cfdisk *cf, const char *tagname, const char *
 
 	if (fs) {
 		if (mounted)
-			xasprintf(&target, _("%s (mounted)"), mnt_fs_get_target(fs));
+			xasprintf(&target, _("%s (montado)"), mnt_fs_get_target(fs));
 		else
 			target = xstrdup(mnt_fs_get_target(fs));
 	}
@@ -1373,7 +1373,7 @@ static void extra_prepare_data(struct cfdisk *cf)
 	}
 
 	if (!fdisk_partition_to_string(pa, cf->cxt, FDISK_FIELD_UUID, &data) && data) {
-		extra_insert_pair(l, _("Partition UUID:"), data);
+		extra_insert_pair(l, _("UUID da partição:"), data);
 
 		/* Search for mountpoint by PARTUUID= means that we need to
 		 * check fstab and convert PARTUUID to the device name. This is
@@ -1430,13 +1430,13 @@ static void extra_prepare_data(struct cfdisk *cf)
 	}
 
 	if (!fdisk_partition_to_string(pa, cf->cxt, FDISK_FIELD_FSLABEL, &data) && data) {
-		extra_insert_pair(l, _("Filesystem LABEL:"), data);
+		extra_insert_pair(l, _("RÓTULO sist. arquivos:"), data);
 		if (!mountpoint)
 			mountpoint = get_mountpoint(cf, "RÓTULO", data);
 		free(data);
 	}
 	if (!fdisk_partition_to_string(pa, cf->cxt, FDISK_FIELD_FSTYPE, &data) && data) {
-		extra_insert_pair(l, _("Filesystem:"), data);
+		extra_insert_pair(l, _("Sist. arquivos:"), data);
 		free(data);
 	}
 
@@ -1785,15 +1785,15 @@ static int ui_refresh(struct cfdisk *cf)
 
 	/* header */
 	attron(A_BOLD);
-	ui_center(0, _("Disk: %s"), fdisk_get_devname(cf->cxt));
+	ui_center(0, _("Disco: %s"), fdisk_get_devname(cf->cxt));
 	attroff(A_BOLD);
-	ui_center(1, _("Size: %s, %"PRIu64" bytes, %ju sectors"),
+	ui_center(1, _("Tamanho: %s, %"PRIu64" bytes, %ju sectors"),
 			strsz, bytes, (uintmax_t) fdisk_get_nsectors(cf->cxt));
 	if (fdisk_get_disklabel_id(cf->cxt, &id) == 0 && id)
-		ui_center(2, _("Label: %s, identifier: %s"),
+		ui_center(2, _("Rótulo: %s, identifier: %s"),
 				fdisk_label_get_name(lb), id);
 	else
-		ui_center(2, _("Label: %s"), fdisk_label_get_name(lb));
+		ui_center(2, _("Rótulo: %s"), fdisk_label_get_name(lb));
 	free(strsz);
 	free(id);
 
@@ -1944,13 +1944,13 @@ static int ui_get_size(struct cfdisk *cf,	/* context */
 		int pwr = 0, insec = 0;
 
 		rc = ui_get_string(prompt,
-				_("May be followed by M for MiB, G for GiB, "
-				  "T for TiB, or S for sectors."),
+				_("Pode ser seguido por M para MiB, G para GiB, "
+				  "T para TiB, ou S para setores."),
 				buf, sizeof(buf));
 		ui_clean_warn();
 
 		if (rc == 0) {
-			ui_warnx(_("Please, specify size."));
+			ui_warnx(_("Por favor, especifique o tamanho."));
 			continue;			/* nothing specified */
 		} if (rc == -CFDISK_ERR_ESC)
 			break;				/* cancel dialog */
@@ -1972,7 +1972,7 @@ static int ui_get_size(struct cfdisk *cf,	/* context */
 			if (insec)
 				user *= fdisk_get_sector_size(cf->cxt);
 			if (user < low) {
-				ui_warnx(_("Minimum size is %"PRIu64" bytes."), low);
+				ui_warnx(_("O tamanho mínimo é %"PRIu64" bytes."), low);
 				rc = -ERANGE;
 			}
 			if (user > up && pwr && user < up + (1ULL << pwr * 10))
@@ -1981,14 +1981,14 @@ static int ui_get_size(struct cfdisk *cf,	/* context */
 				user = up;
 
 			if (user > up) {
-				ui_warnx(_("Maximum size is %"PRIu64" bytes."), up);
+				ui_warnx(_("O tamanho máximo é %"PRIu64" bytes."), up);
 				rc = -ERANGE;
 			}
 			if (rc == 0 && insec && expsize)
 				*expsize = 1;
 
 		} else
-			ui_warnx(_("Failed to parse size."));
+			ui_warnx(_("Falha ao analisar o tamanho."));
 	} while (rc != 0);
 
 	if (rc == 0)
@@ -2046,7 +2046,7 @@ static struct fdisk_parttype *ui_get_parttype(struct cfdisk *cf,
 	menu_push(cf, cm);
 	cf->menu->vertical = 1;
 	cf->menu->idx = idx;
-	menu_set_title(cf->menu, _("Select partition type"));
+	menu_set_title(cf->menu, _("Selecionar o tipo de partição"));
 	ui_draw_menu(cf);
 	refresh();
 
@@ -2274,7 +2274,7 @@ static int ui_help(void)
 		N_("  u          Exportar layout do disco para um script compatível com sfdisk"),
 		N_("  W          Salvar a tabela de partições no disco (é necessário usar W maiúsculo);"),
 	/*	N_("               como isso pode destruir dados no disco, você deve confirmar"),
-		N_("               ou negar a gravação digitando 'yes' ou 'no'"), */
+		N_("               ou negar a gravação digitando 'sim' ou 'não'"), */
 		N_("  x          Exibir/ocultar informações extras sobre uma partição"),
 		N_("Seta para Cima   Mover o cursor para a partição anterior"),
 		N_("Seta para Baixo  Mover o cursor para a próxima partição"),
