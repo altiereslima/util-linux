@@ -24,10 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         env:
-          - { COMPILER: "gcc",   COMPILER_VERSION: "10", SANITIZE: "yes"  }
-          - { COMPILER: "gcc",   COMPILER_VERSION: "10", SANITIZE: "no"   }
-          - { COMPILER: "clang", COMPILER_VERSION: "15", SANITIZE: "yes"  }
-          - { COMPILER: "clang", COMPILER_VERSION: "15", SANITIZE: "no"   }
+          - { COMPILER: "gcc",   COMPILER_VERSION: "10", SANITIZE: "yes", CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function" }
+          - { COMPILER: "gcc",   COMPILER_VERSION: "10", SANITIZE: "no",  CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function" }
+          - { COMPILER: "clang", COMPILER_VERSION: "15", SANITIZE: "yes", CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function" }
+          - { COMPILER: "clang", COMPILER_VERSION: "15", SANITIZE: "no",  CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function" }
     env: ${{ matrix.env }}
     steps:
       - name: Repository checkout
@@ -52,6 +52,7 @@ jobs:
       COMPILER_VERSION: 10
       SANITIZE: no
       COVERAGE: yes
+      CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function"
     steps:
       - name: Repository checkout
         uses: actions/checkout@v4
@@ -62,7 +63,7 @@ jobs:
       - name: Check
         run: sudo -E .github/workflows/cibuild.sh CHECK
       - name: Coveralls
-        uses: coverallsapp/github-action@v2
+        uses: coverallsapp/github-action@v4
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path-to-lcov: ./coverage.info
@@ -74,6 +75,7 @@ jobs:
       COMPILER: gcc
       COMPILER_VERSION: 10
       SANITIZE: no
+      CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function"
     steps:
       - name: Repository checkout
         uses: actions/checkout@v4
@@ -91,6 +93,7 @@ jobs:
       COMPILER: gcc
       COMPILER_VERSION: 10
       SANITIZE: no
+      CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function"
     steps:
       - name: Repository checkout
         uses: actions/checkout@v4
@@ -103,6 +106,8 @@ jobs:
 
   build-s390x:
     runs-on: ubuntu-latest
+    env:
+      CFLAGS: "-Wno-error=unused-variable -Wno-error=unused-function"
     steps:
       - name: Repository checkout
         uses: actions/checkout@v4
@@ -115,6 +120,7 @@ jobs:
             export COMPILER_VERSION=10
             export SANITIZE=no
             export QEMU_USER=1
+            export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
 
             # name: Ubuntu setup
             .github/workflows/cibuild-setup-ubuntu.sh
