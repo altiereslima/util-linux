@@ -24,15 +24,13 @@ actions:
     # Drop all patches, since they're already included in the tarball
     - "sed -ri '/^Patch[0-9]+:/d' .packit_rpm/util-linux.spec"
     # Install additional dependencies we need for the build/tests
-    - "sed -i '/^### Dependencies/aBuildRequires: autoconf automake bc bison flex iproute libtool procps-ng socat sqlite3 sqlite-devel' .packit_rpm/util-linux.spec"
+    - "sed -i '/^### Dependencies/aBuildRequires: autoconf automake bc bison iproute libtool procps-ng socat' .packit_rpm/util-linux.spec"
     # We need to call autogen, since we use a custom tarball
     - "sed -i '/^unset LINGUAS/a./autogen.sh' .packit_rpm/util-linux.spec"
     # Enable tests after build
     - "sed -i '/^### Macros/a%define _with_check 1' .packit_rpm/util-linux.spec"
     # Ignore unpackaged files
     - "sed -i '1 i%define _unpackaged_files_terminate_build 0' .packit_rpm/util-linux.spec"
-    # Enable -Werror
-    - "sed -i 's/^%configure /%configure --enable-werror /' .packit_rpm/util-linux.spec"
   create-archive:
     # We need to override the default create-archive action, since we need to tweak
     # the resulting tarball and add a .tarball-version file to it, otherwise

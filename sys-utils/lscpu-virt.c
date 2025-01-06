@@ -1,14 +1,3 @@
-/*
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * Copyright (C) 2008 Cai Qian <qcai@redhat.com>
- * Copyright (C) 2008-2023 Karel Zak <kzak@redhat.com>
- */
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -17,7 +6,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
-#include <signal.h>
 
 #include "lscpu.h"
 
@@ -273,15 +261,16 @@ static int read_hypervisor_dmi(void)
 	return rc < 0 ? VIRT_VENDOR_NONE : rc;
 }
 
-static int find_virt_pci_device(struct lscpu_cxt *cxt)
+static int has_pci_device(struct lscpu_cxt *cxt,
+			unsigned int vendor, unsigned int device)
 {
 	FILE *f;
-	int num, fn, ven, dev;
-	int vendor = VIRT_VENDOR_NONE;
+	unsigned int num, fn, ven, dev;
+	int res = 1;
 
 	f = ul_path_fopen(cxt->procfs, "r", "bus/pci/devices");
 	if (!f)
-		return vendor;
+		return 0;
 
 	 /* for more details about bus/pci/devices format see
 	  * drivers/pci/proc.c in linux kernel
@@ -289,28 +278,14 @@ static int find_virt_pci_device(struct lscpu_cxt *cxt)
 	while(fscanf(f, "%02x%02x\t%04x%04x\t%*[^\n]",
 			&num, &fn, &ven, &dev) == 4) {
 
-		if (ven == hv_vendor_pci[VIRT_VENDOR_XEN] &&
-			dev == hv_graphics_pci[VIRT_VENDOR_XEN]) {
-			vendor = VIRT_VENDOR_XEN;
+		if (ven == vendor && dev == device)
 			goto found;
-		}
-
-		if (ven == hv_vendor_pci[VIRT_VENDOR_VMWARE] &&
-			dev == hv_graphics_pci[VIRT_VENDOR_VMWARE]) {
-			vendor = VIRT_VENDOR_VMWARE;
-			goto found;
-		}
-
-		if (ven == hv_vendor_pci[VIRT_VENDOR_VBOX] &&
-			dev == hv_graphics_pci[VIRT_VENDOR_VBOX]) {
-			vendor = VIRT_VENDOR_VBOX;
-			goto found;
-		}
 	}
 
+	res = 0;
 found:
 	fclose(f);
-	return vendor;
+	return res;
 }
 
 #if defined(__x86_64__) || defined(__i386__)
@@ -420,13 +395,17 @@ static int read_hypervisor_powerpc(struct lscpu_cxt *cxt, int *type)
 		   && ul_path_access(cxt->procfs, F_OK, "device-tree/hmc-managed?") == 0
 		   && ul_path_access(cxt->procfs, F_OK, "device-tree/chosen/qemu,graphic-width") != 0) {
 
-		char buf[256];
+		FILE *fd;
 		vendor = VIRT_VENDOR_PHYP;
 		*type = VIRT_TYPE_PARA;
 
-		if (ul_path_scanf(cxt->procfs, "device-tree/ibm,partition-name", "%255s", buf) == 1 &&
-		    !strcmp(buf, "full"))
-			*type = VIRT_TYPE_NONE;
+		fd = ul_path_fopen(cxt->procfs, "r", "device-tree/ibm,partition-name");
+		if (fd) {
+			char buf[256];
+			if (fscanf(fd, "%255s", buf) == 1 && !strcmp(buf, "full"))
+				*type = VIRT_TYPE_NONE;
+			fclose(fd);
+		}
 
 	/* Qemu */
 	} else if (is_devtree_compatible(cxt, "qemu,pseries")) {
@@ -468,7 +447,6 @@ void vmware_bdoor(uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
 }
 
 static jmp_buf segv_handler_env;
-static sigset_t oset;
 
 static void
 segv_handler(__attribute__((__unused__)) int sig,
@@ -482,7 +460,6 @@ static int is_vmware_platform(void)
 {
 	uint32_t eax, ebx, ecx, edx;
 	struct sigaction act, oact;
-	sigset_t set;
 
 	/*
 	 * FIXME: Not reliable for non-root users. Note it works as expected if
@@ -501,16 +478,8 @@ static int is_vmware_platform(void)
 	 * the signal. All this magic is needed because lscpu
 	 * isn't supposed to require root privileges.
 	 */
-	if (sigsetjmp(segv_handler_env, 1)) {
-		if (sigprocmask(SIG_SETMASK, &oset, NULL))
-			err(EXIT_FAILURE, _("cannot restore signal mask"));
+	if (sigsetjmp(segv_handler_env, 1))
 		return 0;
-	}
-
-	sigemptyset(&set);
-	sigaddset(&set, SIGSEGV);
-	if (sigprocmask(SIG_UNBLOCK, &set, &oset))
-		err(EXIT_FAILURE, _("cannot unblock signal"));
 
 	memset(&act, 0, sizeof(act));
 	act.sa_sigaction = segv_handler;
@@ -523,9 +492,6 @@ static int is_vmware_platform(void)
 
 	if (sigaction(SIGSEGV, &oact, NULL))
 		err(EXIT_FAILURE, _("cannot restore signal handler"));
-
-	if (sigprocmask(SIG_SETMASK, &oset, NULL))
-		err(EXIT_FAILURE, _("cannot restore signal mask"));
 
 	return eax != (uint32_t)-1 && ebx == VMWARE_BDOOR_MAGIC;
 }
@@ -571,7 +537,7 @@ struct lscpu_virt *lscpu_read_virtualization(struct lscpu_cxt *cxt)
 			goto done;
 	}
 
-	if (is_live(cxt)) {
+	if (!cxt->noalive) {
 		virt->vendor = read_hypervisor_cpuid();
 		if (!virt->vendor)
 			virt->vendor = read_hypervisor_dmi();
@@ -585,7 +551,9 @@ struct lscpu_virt *lscpu_read_virtualization(struct lscpu_cxt *cxt)
 		if (virt->vendor == VIRT_VENDOR_XEN) {
 			uint32_t features;
 
-			if (ul_path_scanf(cxt->rootfs, _PATH_SYS_HYP_FEATURES, "%x", &features) == 1) {
+			fd = ul_prefix_fopen(cxt->prefix, "r", _PATH_SYS_HYP_FEATURES);
+
+			if (fd && fscanf(fd, "%x", &features) == 1) {
 				/* Xen PV domain */
 				if (features & XEN_FEATURES_PV_MASK)
 					virt->type = VIRT_TYPE_PARA;
@@ -594,24 +562,39 @@ struct lscpu_virt *lscpu_read_virtualization(struct lscpu_cxt *cxt)
 								== XEN_FEATURES_PVH_MASK)
 					virt->type = VIRT_TYPE_PARA;
 			}
+			if (fd)
+				fclose(fd);
 		}
 	} else if ((virt->vendor = read_hypervisor_powerpc(cxt, &virt->type))) {
 		;
 
 	/* Xen para-virt or dom0 */
 	} else if (ul_path_access(cxt->procfs, F_OK, "xen") == 0) {
-		char xenbuf[256];
 		int dom0 = 0;
 
-		if (ul_path_scanf(cxt->procfs, "xen/capabilities", "%255s", xenbuf) == 1 &&
-		    !strcmp(xenbuf, "control_d"))
-			dom0 = 1;
+		fd = ul_path_fopen(cxt->procfs, "r", "xen/capabilities");
+		if (fd) {
+			char xenbuf[256];
+
+			if (fscanf(fd, "%255s", xenbuf) == 1 &&
+			    !strcmp(xenbuf, "control_d"))
+				dom0 = 1;
+			fclose(fd);
+		}
 		virt->type = dom0 ? VIRT_TYPE_NONE : VIRT_TYPE_PARA;
 		virt->vendor = VIRT_VENDOR_XEN;
 
 	/* Xen full-virt on non-x86_64 */
-	} else if ((virt->vendor = find_virt_pci_device(cxt))) {
+	} else if (has_pci_device(cxt, hv_vendor_pci[VIRT_VENDOR_XEN], hv_graphics_pci[VIRT_VENDOR_XEN])) {
+		virt->vendor = VIRT_VENDOR_XEN;
 		virt->type = VIRT_TYPE_FULL;
+	} else if (has_pci_device(cxt, hv_vendor_pci[VIRT_VENDOR_VMWARE], hv_graphics_pci[VIRT_VENDOR_VMWARE])) {
+		virt->vendor = VIRT_VENDOR_VMWARE;
+		virt->type = VIRT_TYPE_FULL;
+	} else if (has_pci_device(cxt, hv_vendor_pci[VIRT_VENDOR_VBOX], hv_graphics_pci[VIRT_VENDOR_VBOX])) {
+		virt->vendor = VIRT_VENDOR_VBOX;
+		virt->type = VIRT_TYPE_FULL;
+
 	/* IBM PR/SM */
 	} else if ((fd = ul_path_fopen(cxt->procfs, "r", "sysinfo"))) {
 

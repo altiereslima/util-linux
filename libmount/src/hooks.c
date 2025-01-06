@@ -23,14 +23,14 @@
  *   hooksets with more callbacks in more stages. Usually implemented by
  *   locally defined 'struct hookset_data' in hook_*.c.
  *
- * - per-hook data; accessible for specific callback
+ * - per-hook data; acessible for specific callback
  *   Usually implemented by locally defined 'struct hook_data' in hook_*.c.
  */
 #include "mountP.h"
 #include "mount-api-utils.h"
 
 /* built-in hooksets */
-static const struct libmnt_hookset *const hooksets[] =
+static const struct libmnt_hookset *hooksets[] =
 {
 #ifdef __linux__
 	&hookset_loopdev,
@@ -38,15 +38,12 @@ static const struct libmnt_hookset *const hooksets[] =
 	&hookset_veritydev,
 #endif
 	&hookset_mkdir,
-#ifdef HAVE_LIBSELINUX
-	&hookset_selinux,
-#endif
 	&hookset_subdir,
 #ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
 	&hookset_mount,
 #endif
 	&hookset_mount_legacy,
-#if defined(HAVE_MOUNTFD_API) && defined(HAVE_LINUX_MOUNT_H)
+#ifdef HAVE_MOUNTFD_API
 	&hookset_idmap,
 #endif
 	&hookset_owner
@@ -66,12 +63,10 @@ struct hookset_hook {
 	const struct libmnt_hookset *hookset;
 	int stage;
 	void *data;
-	const char *after;
 
 	int (*func)(struct libmnt_context *, const struct libmnt_hookset *, void *);
 
 	struct list_head	hooks;
-	unsigned int		executed : 1;
 };
 
 static const char *stagenames[] = {
@@ -90,19 +85,12 @@ static const char *stagenames[] = {
 	[MNT_STAGE_POST] = "post",
 };
 
-static int call_depend_hooks(struct libmnt_context *cxt, const char *name, int stage);
-
-
 int mnt_context_deinit_hooksets(struct libmnt_context *cxt)
 {
 	size_t i;
 	int rc = 0;
 
 	assert(cxt);
-
-	if (list_empty(&cxt->hooksets_datas) &&
-	    list_empty(&cxt->hooksets_hooks))
-		return 0;
 
 	for (i = 0; i <  ARRAY_SIZE(hooksets); i++) {
 		const struct libmnt_hookset *hs = hooksets[i];
@@ -197,14 +185,13 @@ void *mnt_context_get_hookset_data(struct libmnt_context *cxt,
 	return hd ? hd->data : NULL;
 }
 
-static int append_hook(struct libmnt_context *cxt,
+int mnt_context_append_hook(struct libmnt_context *cxt,
 			const struct libmnt_hookset *hs,
 			int stage,
 			void *data,
 			int (*func)(struct libmnt_context *,
 				    const struct libmnt_hookset *,
-				    void *),
-			const char *after)
+				    void *))
 {
 	struct hookset_hook *hook;
 
@@ -225,33 +212,9 @@ static int append_hook(struct libmnt_context *cxt,
 	hook->data = data;
 	hook->func = func;
 	hook->stage = stage;
-	hook->after = after;
 
 	list_add_tail(&hook->hooks, &cxt->hooksets_hooks);
 	return 0;
-}
-
-int mnt_context_append_hook(struct libmnt_context *cxt,
-			const struct libmnt_hookset *hs,
-			int stage,
-			void *data,
-			int (*func)(struct libmnt_context *,
-				    const struct libmnt_hookset *,
-				    void *))
-{
-	return append_hook(cxt, hs, stage, data, func, NULL);
-}
-
-int mnt_context_insert_hook(struct libmnt_context *cxt,
-			const char *after,
-			const struct libmnt_hookset *hs,
-			int stage,
-			void *data,
-			int (*func)(struct libmnt_context *,
-				    const struct libmnt_hookset *,
-				    void *))
-{
-	return append_hook(cxt, hs, stage, data, func, after);
 }
 
 static struct hookset_hook *get_hookset_hook(struct libmnt_context *cxt,
@@ -311,45 +274,9 @@ int mnt_context_has_hook(struct libmnt_context *cxt,
 	return get_hookset_hook(cxt, hs, stage, data) ? 1 : 0;
 }
 
-static int call_hook(struct libmnt_context *cxt, struct hookset_hook *hook)
-{
-	int rc = 0;
-
-	if (mnt_context_is_fake(cxt))
-		DBG(CXT, ul_debugobj(cxt, " FAKE call"));
-	else
-		rc = hook->func(cxt, hook->hookset, hook->data);
-
-	hook->executed = 1;
-	if (!rc)
-		rc = call_depend_hooks(cxt, hook->hookset->name, hook->stage);
-	return rc;
-}
-
-static int call_depend_hooks(struct libmnt_context *cxt, const char *name, int stage)
-{
-	struct list_head *p = NULL, *next = NULL;
-	int rc = 0;
-
-	list_for_each_safe(p, next, &cxt->hooksets_hooks) {
-		struct hookset_hook *x = list_entry(p, struct hookset_hook, hooks);
-
-		if (x->stage != stage || x->executed ||
-		    x->after == NULL || strcmp(x->after, name) != 0)
-			continue;
-
-		DBG(CXT, ul_debugobj(cxt, "calling %s [after]", x->hookset->name));
-		rc = call_hook(cxt, x);
-		if (rc)
-			break;
-	}
-
-	return rc;
-}
-
 int mnt_context_call_hooks(struct libmnt_context *cxt, int stage)
 {
-	struct list_head *p = NULL, *next = NULL;
+	struct list_head *p, *next;
 	size_t i;
 	int rc = 0;
 
@@ -362,14 +289,9 @@ int mnt_context_call_hooks(struct libmnt_context *cxt, int stage)
 		if (hs->firststage != stage)
 			continue;
 
-		DBG(CXT, ul_debugobj(cxt, "calling %s [first]", hs->name));
+		DBG(CXT, ul_debugobj(cxt, "calling %s hook", hs->name));
 
-		if (mnt_context_is_fake(cxt))
-			DBG(CXT, ul_debugobj(cxt, " FAKE call"));
-		else
-			rc = hs->firstcall(cxt, hs, NULL);
-		if (!rc)
-			rc = call_depend_hooks(cxt, hs->name, stage);
+		rc = hs->firstcall(cxt, hs, NULL);
 		if (rc < 0)
 			goto done;
 	}
@@ -378,26 +300,17 @@ int mnt_context_call_hooks(struct libmnt_context *cxt, int stage)
 	list_for_each_safe(p, next, &cxt->hooksets_hooks) {
 		struct hookset_hook *x = list_entry(p, struct hookset_hook, hooks);
 
-		if (x->stage != stage || x->executed)
+		if (x->stage != stage)
 			continue;
 
-		DBG(CXT, ul_debugobj(cxt, "calling %s [active]", x->hookset->name));
-		rc = call_hook(cxt, x);
+		DBG(CXT, ul_debugobj(cxt, "calling %s hook", x->hookset->name));
+
+		rc = x->func(cxt, x->hookset, x->data);
 		if (rc < 0)
 			goto done;
 	}
 
 done:
-	/* zeroize status */
-	p = next = NULL;
-	list_for_each_safe(p, next, &cxt->hooksets_hooks) {
-		struct hookset_hook *x = list_entry(p, struct hookset_hook, hooks);
-
-		if (x->stage != stage)
-			continue;
-		x->executed = 0;
-	}
-
 	DBG(CXT, ul_debugobj(cxt, "<--- stage:%s [rc=%d status=%d]",
 				stagenames[stage], rc, cxt->syscall_status));
 	return rc;

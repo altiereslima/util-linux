@@ -1,8 +1,3 @@
-/*
- * No copyright is claimed.  This code is in the public domain; do with
- * it what you wish.
- */
-
 /* Declarations for wide characters */
 /* This file must be included last because the redefinition of wchar_t may
    cause conflicts when system include files were included after it. */

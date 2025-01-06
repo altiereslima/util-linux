@@ -37,7 +37,6 @@ _zramctl_module()
 	case $cur in
 		-*)
 			OPTS="	--algorithm
-				--algorithm-params
 				--bytes
 				--find
 				--noheadings

@@ -5,8 +5,6 @@
  */
 #include <stdio.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <err.h>
 
 #include "md5.h"
 
@@ -25,9 +23,7 @@ int main(void)
 			ul_MD5Update( &ctx, buf, ret );
 	}
 
-	if(freopen ("/dev/null", "r", stdin) == NULL)
-		err(EXIT_FAILURE, "stdin->null failed!");
-
+	fclose(stdin);
 	ul_MD5Final( digest, &ctx );
 
 	for (i = 0; i < UL_MD5LENGTH; i++)

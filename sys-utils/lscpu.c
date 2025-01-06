@@ -1,16 +1,24 @@
 /*
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * lscpu - CPU architecture information helper
+ *
+ * Copyright (C) 2008 Cai Qian <qcai@redhat.com>
+ * Copyright (C) 2008 Karel Zak <kzak@redhat.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * Copyright (C) 2008 Cai Qian <qcai@redhat.com>
- * Copyright (C) 2008-2023 Karel Zak <kzak@redhat.com>
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
- * lscpu - CPU architecture information helper
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+
 #include <assert.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -36,14 +44,14 @@
 
 #include "lscpu.h"
 
-static const char *const virt_types[] = {
+static const char *virt_types[] = {
 	[VIRT_TYPE_NONE]	= N_("none"),
 	[VIRT_TYPE_PARA]	= N_("para"),
 	[VIRT_TYPE_FULL]	= N_("full"),
 	[VIRT_TYPE_CONTAINER]	= N_("container"),
 };
 
-static const char *const hv_vendors[] = {
+static const char *hv_vendors[] = {
 	[VIRT_VENDOR_NONE]	= NULL,
 	[VIRT_VENDOR_XEN]	= "Xen",
 	[VIRT_VENDOR_KVM]	= "KVM",
@@ -63,7 +71,7 @@ static const char *const hv_vendors[] = {
 };
 
 /* dispatching modes */
-static const char *const disp_modes[] = {
+static const char *disp_modes[] = {
 	[DISP_HORIZONTAL]	= N_("horizontal"),
 	[DISP_VERTICAL]		= N_("vertical")
 };
@@ -127,7 +135,7 @@ struct lscpu_coldesc {
 	const char *help;
 
 	int flags;
-	bool is_abbr;	/* name is abbreviation */
+	unsigned int  is_abbr:1;	/* name is abbreviation */
 	int json_type;
 };
 
@@ -598,8 +606,6 @@ static void print_caches_readable(struct lscpu_cxt *cxt, int cols[], size_t ncol
 		scols_table_enable_json(tb, 1);
 		scols_table_set_name(tb, "caches");
 	}
-	if (cxt->raw)
-		scols_table_enable_raw(tb, 1);
 
 	for (i = 0; i < ncols; i++) {
 		struct lscpu_coldesc *cd = &coldescs_cache[cols[i]];
@@ -755,8 +761,6 @@ static void print_cpus_readable(struct lscpu_cxt *cxt, int cols[], size_t ncols)
 		scols_table_enable_json(tb, 1);
 		scols_table_set_name(tb, "cpus");
 	}
-	if (cxt->raw)
-		scols_table_enable_raw(tb, 1);
 
 	for (i = 0; i < ncols; i++) {
 		data = get_cell_header(cxt, cols[i], buf, sizeof(buf));
@@ -827,13 +831,12 @@ static struct libscols_line *
 
 	/* data column */
 	if (fmt) {
-		int ret;
-
+		char *data;
 		va_start(args, fmt);
-		ret = scols_line_vprintf(ln, 1, fmt, args);
+		xvasprintf(&data, fmt, args);
 		va_end(args);
 
-		if (ret < 0)
+		if (data && scols_line_refer_data(ln, 1, data))
 			err(EXIT_FAILURE, _("failed to add output data"));
 	}
 
@@ -852,14 +855,12 @@ print_cpuset(struct lscpu_cxt *cxt,
 	     const char *key, cpu_set_t *set)
 {
 	size_t setbuflen = 7 * cxt->maxcpus;
-	char *setbuf, *p;
+	char setbuf[setbuflen], *p;
 
 	assert(set);
 	assert(key);
 	assert(tb);
 	assert(cxt);
-
-	setbuf = xmalloc(setbuflen);
 
 	if (cxt->hex) {
 		p = cpumask_create(setbuf, setbuflen, set, cxt->setsize);
@@ -868,8 +869,6 @@ print_cpuset(struct lscpu_cxt *cxt,
 		p = cpulist_create(setbuf, setbuflen, set, cxt->setsize);
 		add_summary_s(tb, sec, key, p);
 	}
-
-	free(setbuf);
 }
 
 static void
@@ -995,16 +994,18 @@ static void print_summary(struct lscpu_cxt *cxt)
 	/* Section: architecture */
 	sec = add_summary_s(tb, NULL, _("Architecture:"), cxt->arch->name);
 	if (cxt->arch->bit32 || cxt->arch->bit64) {
-		const char *p;
+		char buf[32], *p = buf;
 
-		if (cxt->arch->bit32 && cxt->arch->bit64)
-			p = "32-bit, 64-bit";
-		else if (cxt->arch->bit32)
-			p = "32-bit";
-		else
-			p = "64-bit";
-
-		add_summary_s(tb, sec, _("CPU op-mode(s):"), p);
+		if (cxt->arch->bit32) {
+			strcpy(p, "32-bit, ");
+			p += 8;
+		}
+		if (cxt->arch->bit64) {
+			strcpy(p, "64-bit, ");
+			p += 8;
+		}
+		*(p - 2) = '\0';
+		add_summary_s(tb, sec, _("CPU op-mode(s):"), buf);
 	}
 	if (ct && ct->addrsz)
 		add_summary_s(tb, sec, _("Address sizes:"), ct->addrsz);
@@ -1187,14 +1188,13 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -J, --json              use JSON for default or extended format\n"), out);
 	fputs(_(" -e, --extended[=<list>] print out an extended readable format\n"), out);
 	fputs(_(" -p, --parse[=<list>]    print out a parsable format\n"), out);
-	fputs(_(" -r, --raw               use raw output format (for -e, -p and -C)\n"), out);
 	fputs(_(" -s, --sysroot <dir>     use specified directory as system root\n"), out);
 	fputs(_(" -x, --hex               print hexadecimal masks rather than lists of CPUs\n"), out);
 	fputs(_(" -y, --physical          print physical instead of logical IDs\n"), out);
 	fputs(_("     --hierarchic[=when] use subsections in summary (auto, never, always)\n"), out);
 	fputs(_("     --output-all        print all available columns for -e, -p or -C\n"), out);
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(25));
+	printf(USAGE_HELP_OPTIONS(25));
 
 	fputs(_("\nAvailable output columns for -e or -p:\n"), out);
 	for (i = 0; i < ARRAY_SIZE(coldescs_cpu); i++)
@@ -1204,7 +1204,7 @@ static void __attribute__((__noreturn__)) usage(void)
 	for (i = 0; i < ARRAY_SIZE(coldescs_cache); i++)
 		fprintf(out, " %13s  %s\n", coldescs_cache[i].name, _(coldescs_cache[i].help));
 
-	fprintf(out, USAGE_MAN_TAIL("lscpu(1)"));
+	printf(USAGE_MAN_TAIL("lscpu(1)"));
 
 	exit(EXIT_SUCCESS);
 }
@@ -1231,7 +1231,6 @@ int main(int argc, char *argv[])
 		{ "extended",	optional_argument, NULL, 'e' },
 		{ "json",       no_argument,       NULL, 'J' },
 		{ "parse",	optional_argument, NULL, 'p' },
-		{ "raw",        no_argument,       NULL, 'r' },
 		{ "sysroot",	required_argument, NULL, 's' },
 		{ "physical",	no_argument,	   NULL, 'y' },
 		{ "hex",	no_argument,	   NULL, 'x' },
@@ -1255,7 +1254,7 @@ int main(int argc, char *argv[])
 
 	cxt = lscpu_new_context();
 
-	while ((c = getopt_long(argc, argv, "aBbC::ce::hJp::rs:xyV", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "aBbC::ce::hJp::s:xyV", longopts, NULL)) != -1) {
 
 		err_exclusive_options(c, longopts, excl, excl_st);
 
@@ -1294,9 +1293,6 @@ int main(int argc, char *argv[])
 				outarg = optarg;
 			}
 			cxt->mode = c == 'p' ? LSCPU_OUTPUT_PARSABLE : LSCPU_OUTPUT_READABLE;
-			break;
-		case 'r':
-			cxt->raw = 1;
 			break;
 		case 's':
 			cxt->prefix = optarg;
@@ -1375,8 +1371,7 @@ int main(int argc, char *argv[])
 	lscpu_read_numas(cxt);
 	lscpu_read_topology(cxt);
 
-	if (is_arm(cxt))
-		lscpu_decode_arm(cxt);
+	lscpu_decode_arm(cxt);
 
 	cxt->virt = lscpu_read_virtualization(cxt);
 
@@ -1449,7 +1444,6 @@ int main(int argc, char *argv[])
 		print_cpus_readable(cxt, columns, ncolumns);
 		break;
 	case LSCPU_OUTPUT_PARSABLE:
-		cxt->show_compatible = 1;
 		if (!ncolumns) {
 			columns[ncolumns++] = COL_CPU_CPU;
 			columns[ncolumns++] = COL_CPU_CORE;
@@ -1459,14 +1453,12 @@ int main(int argc, char *argv[])
 				columns[ncolumns++] = COL_CPU_SOCKET;
 			columns[ncolumns++] = COL_CPU_NODE;
 			columns[ncolumns++] = COL_CPU_CACHE;
+			cxt->show_compatible = 1;
 		}
-		if (outarg) {
-			if (string_add_to_idarray(outarg, columns,
+		if (outarg && string_add_to_idarray(outarg, columns,
 					ARRAY_SIZE(columns),
 					&ncolumns, cpu_column_name_to_id) < 0)
-				return EXIT_FAILURE;
-			cxt->show_compatible = 0;
-		}
+			return EXIT_FAILURE;
 
 		print_cpus_parsable(cxt, columns, ncolumns);
 		break;

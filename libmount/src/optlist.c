@@ -16,9 +16,8 @@
 #include "strutils.h"
 #include "list.h"
 #include "mountP.h"
-#include "mount-api-utils.h"
 
-#define MNT_OL_MAXMAPS	8
+#define MNT_OL_MAXMAPS	64
 
 enum libmnt_optsrc {
 	MNT_OPTSRC_STRING,
@@ -44,11 +43,7 @@ struct libmnt_opt {
 
 	enum libmnt_optsrc	src;
 
-	unsigned int external : 1,	/* visible for external helpers only */
-		     recursive : 1,	/* recursive flag */
-		     sepnodata : 1,	/* value separator, but without data ("name=") */
-		     is_linux : 1,	/* defined in ls->linux_map (VFS attr) */
-		     quoted : 1;	/* name="value" */
+	unsigned int external : 1;	/* visible for external helpers only */
 };
 
 struct libmnt_optlist {
@@ -72,7 +67,7 @@ struct libmnt_optlist {
 			is_rdonly : 1,
 			is_move : 1,
 			is_silent : 1,
-			is_rpropagation : 1;	/* recursive propagation (rbind, rprivate, ...) */
+			is_recursive : 1;
 };
 
 struct libmnt_optlist *mnt_new_optlist(void)
@@ -99,7 +94,7 @@ void mnt_ref_optlist(struct libmnt_optlist *ls)
 
 static void reset_cache(struct optlist_cache *cache)
 {
-	if (!cache || (cache->flags_ready == 0 && cache->optstr_ready == 0))
+	if (!cache)
 		return;
 	free(cache->optstr);
 	memset(cache, 0, sizeof(*cache));
@@ -139,7 +134,7 @@ int mnt_optlist_register_map(struct libmnt_optlist *ls, const struct libmnt_optm
 
 	for (i = 0; i < ls->nmaps; i++) {
 		if (ls->maps[i] == map)
-			return 0;		/* already registered, ignore */
+			return 0;		/* already registred, ignore */
 	}
 	if (ls->nmaps + 1 >= MNT_OL_MAXMAPS)
 		return -ERANGE;
@@ -163,7 +158,7 @@ static size_t optlist_get_mapidx(struct libmnt_optlist *ls, const struct libmnt_
 	return (size_t) -1;
 }
 
-static void optlist_cleanup_cache(struct libmnt_optlist *ls)
+static void optlist_cleanup_cache(struct libmnt_optlist *ls, const struct libmnt_optmap *map)
 {
 	size_t i;
 
@@ -172,8 +167,14 @@ static void optlist_cleanup_cache(struct libmnt_optlist *ls)
 	if (list_empty(&ls->opts))
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(ls->cache_mapped); i++)
-		reset_cache(&ls->cache_mapped[i]);
+	if (map) {
+		size_t idx = optlist_get_mapidx(ls, map);
+
+		if (idx == (size_t) -1)
+			return;
+
+		reset_cache(&ls->cache_mapped[idx]);
+	}
 
 	for (i = 0; i < __MNT_OL_FLTR_COUNT; i++)
 		reset_cache(&ls->cache_all[i]);
@@ -203,10 +204,11 @@ int mnt_optlist_remove_opt(struct libmnt_optlist *ls, struct libmnt_opt *opt)
 			ls->is_silent = 0;
 
 		if (opt->ent->id & MS_REC)
-			ls->is_rpropagation = 0;
+			ls->is_recursive = 0;
+
 	}
 
-	optlist_cleanup_cache(ls);
+	optlist_cleanup_cache(ls, opt->map);
 
 	list_del_init(&opt->opts);
 	free(opt->value);
@@ -229,17 +231,14 @@ int mnt_optlist_next_opt(struct libmnt_optlist *ls,
 {
 	int rc = 1;
 
-	if (!ls || !itr)
+	if (!ls || !itr || !opt)
 		return -EINVAL;
-	if (opt)
-		*opt = NULL;
+	*opt = NULL;
 
 	if (!itr->head)
 		MNT_ITER_INIT(itr, &ls->opts);
 	if (itr->p != itr->head) {
-		if (opt)
-			*opt = MNT_ITER_GET_ENTRY(itr, struct libmnt_opt, opts);
-		MNT_ITER_ITERATE(itr);
+		MNT_ITER_ITERATE(itr, *opt, struct libmnt_opt, opts);
 		rc = 0;
 	}
 
@@ -339,7 +338,6 @@ int mnt_optlist_merge_opts(struct libmnt_optlist *ls)
 
 			/* remove inverted option */
 			else if (opt->ent && x->ent
-			    && opt->map == x->map
 			    && opt->ent->id == x->ent->id
 			    && (opt->ent->mask & MNT_INVERT
 				    || x->ent->mask & MNT_INVERT))
@@ -357,60 +355,6 @@ int mnt_optlist_merge_opts(struct libmnt_optlist *ls)
 
 	return 0;
 }
-
-#ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-static inline int flag_to_attr(unsigned long flag, uint64_t *attr)
-{
-	uint64_t a = 0;
-
-	switch (flag) {
-	case MS_RDONLY:
-		a = MOUNT_ATTR_RDONLY;
-		break;
-	case MS_NOSUID:
-		a = MOUNT_ATTR_NOSUID;
-		break;
-	case MS_NODEV:
-		a = MOUNT_ATTR_NODEV;
-		break;
-	case MS_NOEXEC:
-		a = MOUNT_ATTR_NOEXEC;
-		break;
-	case MS_NODIRATIME:
-		a = MOUNT_ATTR_NODIRATIME;
-		break;
-	case MS_RELATIME:
-		a = MOUNT_ATTR_RELATIME;
-		break;
-	case MS_NOATIME:
-		a =  MOUNT_ATTR_NOATIME;
-		break;
-	case MS_STRICTATIME:
-		a = MOUNT_ATTR_STRICTATIME;
-		break;
-	case MS_NOSYMFOLLOW:
-		a = MOUNT_ATTR_NOSYMFOLLOW;
-		break;
-	default:
-		return -1;
-	}
-
-	if (attr)
-		*attr = a;
-	return 0;
-}
-
-/*
- * Is the @opt relevant for mount_setattr() ?
- */
-static inline int is_vfs_opt(struct libmnt_opt *opt)
-{
-	if (!opt->map || !opt->ent || !opt->ent->id || !opt->is_linux)
-		return 0;
-
-	return flag_to_attr(opt->ent->id, NULL) < 0 ? 0 : 1;
-}
-#endif
 
 static struct libmnt_opt *optlist_new_opt(struct libmnt_optlist *ls,
 			const char *name, size_t namesz,
@@ -431,18 +375,9 @@ static struct libmnt_opt *optlist_new_opt(struct libmnt_optlist *ls,
 	opt->ent = ent;
 
 	if (valsz) {
-		if (*value == '"' && *(value + valsz - 1) == '"') {
-			opt->quoted = 1;
-			value++;
-			valsz -= 2;
-		}
 		opt->value = strndup(value, valsz);
 		if (!opt->value)
 			goto fail;
-
-	} else if (value) {
-		/* separator specified, but empty value ("name=") */
-		opt->sepnodata = 1;
 	}
 	if (namesz) {
 		opt->name = strndup(name, namesz);
@@ -457,8 +392,6 @@ static struct libmnt_opt *optlist_new_opt(struct libmnt_optlist *ls,
 
 	/* shortcuts */
 	if (map && ent && map == ls->linux_map) {
-		opt->is_linux = 1;
-
 		if (ent->id & MS_PROPAGATION)
 			ls->propagation |= ent->id;
 		else if (opt->ent->id == MS_REMOUNT)
@@ -468,22 +401,16 @@ static struct libmnt_opt *optlist_new_opt(struct libmnt_optlist *ls,
 		else if (opt->ent->id == MS_BIND)
 			ls->is_bind = 1;
 		else if (opt->ent->id == MS_RDONLY)
-			ls->is_rdonly = opt->ent->mask & MNT_INVERT ? 0 : 1;
+			ls->is_rdonly = 1;
 		else if (opt->ent->id == MS_MOVE)
 			ls->is_move = 1;
 		else if (opt->ent->id == MS_SILENT)
 			ls->is_silent = 1;
 
-		if (opt->ent->id & MS_REC) {
-			ls->is_rpropagation = 1;
-			opt->recursive = 1;
-		}
+		if (opt->ent->id & MS_REC)
+			ls->is_recursive = 1;
 	}
-#ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-	if (!opt->recursive && opt->value
-	    && is_vfs_opt(opt) && mnt_opt_value_with(opt, "recursive"))
-		opt->recursive = 1;
-#endif
+
 	if (ent && map) {
 		DBG(OPTLIST, ul_debugobj(ls, " added %s [id=0x%08x map=%p]",
 				opt->name, ent->id, map));
@@ -526,11 +453,9 @@ static int optlist_add_optstr(struct libmnt_optlist *ls, const char *optstr,
 		if (!opt)
 			return -ENOMEM;
 		opt->src = MNT_OPTSRC_STRING;
-		if (where)
-			where = &opt->opts;
 	}
 
-	optlist_cleanup_cache(ls);
+	optlist_cleanup_cache(ls, map);
 
 	return 0;
 }
@@ -630,11 +555,9 @@ static int optlist_add_flags(struct libmnt_optlist *ls, unsigned long flags,
 		if (!opt)
 			return -ENOMEM;
 		opt->src = MNT_OPTSRC_FLAG;
-		if (where)
-			where = &opt->opts;
 	}
 
-	optlist_cleanup_cache(ls);
+	optlist_cleanup_cache(ls, map);
 
 	return 0;
 }
@@ -820,24 +743,40 @@ int mnt_optlist_get_flags(struct libmnt_optlist *ls, unsigned long *flags,
 	return 0;
 }
 
+#ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
+static inline uint64_t flag_to_attr(unsigned long flag)
+{
+	switch (flag) {
+	case MS_RDONLY:
+		return MOUNT_ATTR_RDONLY;
+	case MS_NOSUID:
+		return MOUNT_ATTR_NOSUID;
+	case MS_NOEXEC:
+		return MOUNT_ATTR_NOEXEC;
+	case MS_NODIRATIME:
+		return MOUNT_ATTR_NODIRATIME;
+	case MS_RELATIME:
+		return MOUNT_ATTR_RELATIME;
+	case MS_NOATIME:
+		return MOUNT_ATTR_NOATIME;
+	case MS_STRICTATIME:
+		return MOUNT_ATTR_STRICTATIME;
+	case MS_NOSYMFOLLOW:
+		return MOUNT_ATTR_NOSYMFOLLOW;
+	}
+	return 0;
+}
+#endif
 
 /*
  * Like mnt_optlist_get_flags() for VFS flags, but converts classic MS_* flags to
  * new MOUNT_ATTR_*
  */
 #ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-
-#define MNT_RESETABLE_ATTRS	(MOUNT_ATTR_RDONLY| MOUNT_ATTR_NOSUID| \
-				 MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC| \
-				 MOUNT_ATTR_NOATIME|  MOUNT_ATTR_NODIRATIME | \
-				 MOUNT_ATTR_NOSYMFOLLOW)
-
-int mnt_optlist_get_attrs(struct libmnt_optlist *ls, uint64_t *set, uint64_t *clr, int rec)
+int mnt_optlist_get_attrs(struct libmnt_optlist *ls, uint64_t *set, uint64_t *clr)
 {
 	struct libmnt_iter itr;
 	struct libmnt_opt *opt;
-	uint64_t remount_reset = 0;
-	uint64_t atime_set = 0;
 
 	if (!ls || !ls->linux_map || !set || !clr)
 		return -EINVAL;
@@ -845,92 +784,37 @@ int mnt_optlist_get_attrs(struct libmnt_optlist *ls, uint64_t *set, uint64_t *cl
 	*set = 0, *clr = 0;
 	mnt_reset_iter(&itr, MNT_ITER_FORWARD);
 
-	/* The classic mount(2) MS_REMOUNT resets all flags which are not
-	 * specified (except atime stuff). For backward compatibility we need
-	 * to emulate this semantic by mount_setattr(). The new
-	 * mount_setattr() has simple set/unset sematinc and nothing is
-	 * reset internally in kernel.
-	 */
-	if (mnt_optlist_is_remount(ls)
-	    && !mnt_optlist_is_bind(ls)
-	    && rec == MNT_OL_NOREC)
-		remount_reset = (MOUNT_ATTR_RDONLY| MOUNT_ATTR_NOSUID| \
-				 MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC| \
-				 MOUNT_ATTR_NOSYMFOLLOW);
-
 	while (mnt_optlist_next_opt(ls, &itr, &opt) == 0) {
-		uint64_t x = 0;
+		uint64_t x;
 
 		if (ls->linux_map != opt->map)
 			continue;
 		if (!opt->ent || !opt->ent->id)
 			continue;
-
-		if (rec == MNT_OL_REC && !opt->recursive)
-			continue;
-		if (rec == MNT_OL_NOREC && opt->recursive)
-			continue;
-
 		if (!is_wanted_opt(opt, ls->linux_map, MNT_OL_FLTR_DFLT))
 			continue;
-		if (flag_to_attr( opt->ent->id, &x) < 0)
+		x = flag_to_attr( opt->ent->id );
+		if (!x)
 			continue;
-
-		if (x == MOUNT_ATTR_RDONLY && !mnt_opt_value_with(opt, "vfs")
-				           && mnt_opt_value_with(opt, "fs"))
-			continue;
-
-		if (x && remount_reset)
-			remount_reset &= ~x;
 
 		if (opt->ent->mask & MNT_INVERT) {
-			DBG(OPTLIST, ul_debugobj(ls, " clr: %s 0x%08" PRIx64,
-						opt->ent->name, x));
-
-			if (x == MOUNT_ATTR_RELATIME || x == MOUNT_ATTR_NOATIME ||
-			    x == MOUNT_ATTR_STRICTATIME)
-				*clr |= MOUNT_ATTR__ATIME;
-			else
-				*clr |= x;
+			DBG(OPTLIST, ul_debugobj(ls, " clr: %s", opt->ent->name));
+			*clr |= x;
 		} else {
-			if (x == MOUNT_ATTR_RELATIME || x == MOUNT_ATTR_NOATIME ||
-			    x == MOUNT_ATTR_STRICTATIME) {
-				/* All atime settings are mutually exclusive,
-				 * the last option wins and MOUNT_ATTR__ATIME
-				 * is required in clr mask.
-				 */
-				DBG(OPTLIST, ul_debugobj(ls, " atime: %s 0x%08" PRIx64,
-							opt->ent->name, x));
-				*clr |= MOUNT_ATTR__ATIME;
-				atime_set = x;
-			} else {
-				DBG(OPTLIST, ul_debugobj(ls, " set: %s 0x%08" PRIx64,
-							opt->ent->name, x));
-				*set |= x;
-			}
+			DBG(OPTLIST, ul_debugobj(ls, " set: %s", opt->ent->name));
+			*set |= x;
 		}
 	}
 
-	if (atime_set) {
-		DBG(OPTLIST, ul_debugobj(ls, " set atime 0x%08" PRIx64, atime_set));
-		*set |= atime_set;
-	}
-	if (remount_reset)
-		*clr |= remount_reset;
-
 	DBG(OPTLIST, ul_debugobj(ls, "return attrs set=0x%08" PRIx64
-				      ", clr=0x%08" PRIx64 " %s",
-				*set, *clr,
-				rec == MNT_OL_REC ? "[rec]" :
-				rec == MNT_OL_NOREC ? "[norec]" : ""));
+				      ", clr=0x%08" PRIx64, *set, *clr));
 	return 0;
 }
 
 #else
 int mnt_optlist_get_attrs(struct libmnt_optlist *ls __attribute__((__unused__)),
 			  uint64_t *set __attribute__((__unused__)),
-			  uint64_t *clr __attribute__((__unused__)),
-			  int mask __attribute__((__unused__)))
+			  uint64_t *clr __attribute__((__unused__)))
 {
 	return 0;
 }
@@ -950,13 +834,13 @@ int mnt_optlist_strdup_optstr(struct libmnt_optlist *ls, char **optstr,
 
 	*optstr = NULL;
 
-	/* For generic options strings ro/rw are expected at the beginning */
+	/* For generic options srings ro/rw is expected at the begining */
 	if ((!map || map == ls->linux_map)
 	     && (what == MNT_OL_FLTR_DFLT ||
 		 what == MNT_OL_FLTR_ALL ||
 		 what == MNT_OL_FLTR_HELPERS)) {
 
-		rc = mnt_buffer_append_option(&buf, "rw", 2, NULL, 0, 0);
+		rc = mnt_buffer_append_option(&buf, "rw", 2, NULL, 0);
 		if (rc)
 			goto fail;
 		xx_wanted = 1;
@@ -968,17 +852,6 @@ int mnt_optlist_strdup_optstr(struct libmnt_optlist *ls, char **optstr,
 		if (!opt->name)
 			continue;
 		if (opt->map == ls->linux_map && opt->ent->id == MS_RDONLY) {
-			/* "ro=fs" -- ignore for VFS (linux map wanted) */
-			if (map == ls->linux_map
-			    && !mnt_opt_value_with(opt, "vfs")
-			    && mnt_opt_value_with(opt, "fs"))
-				continue;
-			/* "ro=vfs" -- ignore for FS */
-			if (what == MNT_OL_FLTR_UNKNOWN
-			    && !mnt_opt_value_with(opt, "fs")
-			    && mnt_opt_value_with(opt, "vfs"))
-				continue;
-
 			is_rdonly = opt->ent->mask & MNT_INVERT ? 0 : 1;
 			continue;
 		}
@@ -986,10 +859,8 @@ int mnt_optlist_strdup_optstr(struct libmnt_optlist *ls, char **optstr,
 			continue;
 		rc = mnt_buffer_append_option(&buf,
 					opt->name, strlen(opt->name),
-					opt->value ? opt->value :
-						     opt->sepnodata ? "" : NULL,
-					opt->value ? strlen(opt->value) : 0,
-					opt->quoted);
+					opt->value,
+					opt->value ? strlen(opt->value) : 0);
 		if (rc)
 			goto fail;
 	}
@@ -1072,8 +943,6 @@ struct libmnt_optlist *mnt_copy_optlist(struct libmnt_optlist *ls)
 		if (no) {
 			no->src = opt->src;
 			no->external = opt->external;
-			no->quoted = opt->quoted;
-			no->sepnodata = opt->sepnodata;
 		}
 	}
 
@@ -1119,9 +988,9 @@ int mnt_optlist_is_remount(struct libmnt_optlist *ls)
 	return ls && ls->is_remount;
 }
 
-int mnt_optlist_is_rpropagation(struct libmnt_optlist *ls)
+int mnt_optlist_is_recursive(struct libmnt_optlist *ls)
 {
-	return ls && ls->is_rpropagation;
+	return ls && ls->is_recursive;
 }
 
 int mnt_optlist_is_move(struct libmnt_optlist *ls)
@@ -1160,34 +1029,6 @@ const char *mnt_opt_get_value(struct libmnt_opt *opt)
 	return opt->value;
 }
 
-/* check if option value is @str or comma separated @str */
-int mnt_opt_value_with(struct libmnt_opt *opt, const char *str)
-{
-	char *p;
-	const char *start = opt->value;
-	size_t len;
-
-	if (!str || !opt->value || !*opt->value)
-		return 0;
-
-	len = strlen(str);
-
-	while (start && *start) {
-		p = strstr(start, str);
-		if (!p)
-			return 0;
-		start = p + len;
-
-		if (p > opt->value && *(p - 1) != ',')
-			continue;
-		len = strlen(str);
-		if (*(p + len) != '\0' && *(p + len) != ',')
-			continue;
-		return 1;
-	}
-	return 0;
-}
-
 const char *mnt_opt_get_name(struct libmnt_opt *opt)
 {
 	return opt->name;
@@ -1205,14 +1046,7 @@ const struct libmnt_optmap *mnt_opt_get_mapent(struct libmnt_opt *opt)
 
 int mnt_opt_set_value(struct libmnt_opt *opt, const char *str)
 {
-	int rc;
-
-	opt->recursive = 0;
-	rc = strdup_to_struct_member(opt, value, str);
-
-	if (rc == 0 && mnt_opt_value_with(opt, "recursive"))
-		opt->recursive = 1;
-	return rc;
+	return strdup_to_struct_member(opt, value, str);
 }
 
 int mnt_opt_set_u64value(struct libmnt_opt *opt, uint64_t num)
@@ -1226,8 +1060,26 @@ int mnt_opt_set_u64value(struct libmnt_opt *opt, uint64_t num)
 
 int mnt_opt_set_quoted_value(struct libmnt_opt *opt, const char *str)
 {
-	opt->quoted = 1;
-	return mnt_opt_set_value(opt, str);
+	char *value = NULL;
+
+	if (str && *str) {
+		size_t len = strlen(str);
+		char *p;
+
+		assert(len);
+		p = value = malloc(len + 3);
+		if (!value)
+			return -ENOMEM;
+		*p++ = '"';
+		memcpy(p, str, len);
+		p += len;
+		*p = '"';
+	}
+
+	free(opt->value);
+	opt->value = value;
+
+	return 0;
 }
 
 int mnt_opt_set_external(struct libmnt_opt *opt, int enable)
@@ -1241,11 +1093,6 @@ int mnt_opt_set_external(struct libmnt_opt *opt, int enable)
 int mnt_opt_is_external(struct libmnt_opt *opt)
 {
 	return opt && opt->external ? 1 : 0;
-}
-
-int mnt_opt_is_sepnodata(struct libmnt_opt *opt)
-{
-	return opt->sepnodata;
 }
 
 
@@ -1302,11 +1149,10 @@ static const struct libmnt_optmap *get_map(const char *name)
 
 static inline unsigned long str2flg(const char *str)
 {
-	return (unsigned long) strtox64_or_err(str, "can't convert string to flags");
+	return (unsigned long) strtox64_or_err(str, "connt convert string to flags");
 }
 
-static int test_append_str(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int test_append_str(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	int rc;
@@ -1322,8 +1168,7 @@ static int test_append_str(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_prepend_str(struct libmnt_test *ts __attribute__((unused)),
-			    int argc, char *argv[])
+static int test_prepend_str(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	int rc;
@@ -1339,8 +1184,7 @@ static int test_prepend_str(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_set_str(struct libmnt_test *ts __attribute__((unused)),
-			int argc, char *argv[])
+static int test_set_str(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	int rc;
@@ -1356,8 +1200,7 @@ static int test_set_str(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_append_flg(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int test_append_flg(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	int rc;
@@ -1373,8 +1216,7 @@ static int test_append_flg(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_set_flg(struct libmnt_test *ts __attribute__((unused)),
-			int argc, char *argv[])
+static int test_set_flg(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	int rc;
@@ -1390,8 +1232,7 @@ static int test_set_flg(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_get_str(struct libmnt_test *ts __attribute__((unused)),
-			int argc, char *argv[])
+static int test_get_str(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	const struct libmnt_optmap *map;
@@ -1450,8 +1291,7 @@ done:
 	return rc;
 }
 
-static int test_get_flg(struct libmnt_test *ts __attribute__((unused)),
-			int argc, char *argv[])
+static int test_get_flg(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_optlist *ol;
 	unsigned long flags = 0;
@@ -1468,62 +1308,6 @@ static int test_get_flg(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_split(struct libmnt_test *ts __attribute__((unused)),
-		      int argc, char *argv[])
-{
-	struct libmnt_optlist *ol;
-	int rc;
-	struct libmnt_iter itr;
-	struct libmnt_opt *opt;
-	const char *name, *value;
-
-	if (argc != 2)
-		return -EINVAL;
-	rc = mk_optlist(&ol, argv[1]);
-	if (rc)
-		goto done;
-
-	mnt_reset_iter(&itr, MNT_ITER_FORWARD);
-
-	while (mnt_optlist_next_opt(ol, &itr, &opt) == 0) {
-		name = mnt_opt_get_name(opt);
-		value = mnt_opt_get_value(opt);
-
-		printf("%s = %s\n", name, value ?: "(null)");
-	}
-
-done:
-	mnt_unref_optlist(ol);
-	return rc;
-}
-
-static int test_value_with(struct libmnt_test *ts __attribute__((unused)),
-		int argc, char *argv[])
-{
-	struct libmnt_optlist *ol;
-	struct libmnt_opt *opt;
-	int rc;
-
-	if (argc != 4)
-		return -EINVAL;
-
-	rc = mk_optlist(&ol, argv[1]);
-	if (rc)
-		goto done;
-
-	opt = mnt_optlist_get_named(ol, argv[2], NULL);
-	if (!opt)
-		warnx("not found '%s' option", argv[2]);
-	else if (mnt_opt_value_with(opt, argv[3]))
-		printf("found\n");
-	else
-		printf("'%s' not found within '%s'\n", argv[3], mnt_opt_get_value(opt));
-
-done:
-	mnt_unref_optlist(ol);
-	return rc;
-}
-
 int main(int argc, char *argv[])
 {
 	struct libmnt_test tss[] = {
@@ -1534,8 +1318,6 @@ int main(int argc, char *argv[])
 		{ "--set-flg",     test_set_flg,     "<list> <flg>  linux|user   set to the list" },
 		{ "--get-str",     test_get_str,     "<list> [linux|user]        all options in string" },
 		{ "--get-flg",     test_get_flg,     "<list>  linux|user         all options by flags" },
-		{ "--split",       test_split,       "<list>                     split options into key-value pairs"},
-		{ "--value-with",  test_value_with,  "<list> <opt> <str>        check if option value contains string"},
 
 		{ NULL }
 	};

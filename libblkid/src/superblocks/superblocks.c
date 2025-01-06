@@ -94,9 +94,6 @@ static int blkid_probe_set_usage(blkid_probe pr, int usage);
  */
 static const struct blkid_idinfo *idinfos[] =
 {
-	/* First, as access to locked OPAL region triggers IO errors */
-	&luks_opal_idinfo,
-
 	/* RAIDs */
 	&linuxraid_idinfo,
 	&ddfraid_idinfo,
@@ -112,7 +109,6 @@ static const struct blkid_idinfo *idinfos[] =
 	&jmraid_idinfo,
 
 	&bcache_idinfo,
-	&bcachefs_idinfo,
 	&bluestore_idinfo,
 	&drbd_idinfo,
 	&drbdmanage_idinfo,
@@ -420,9 +416,7 @@ static int superblocks_probe(blkid_probe pr, struct blkid_chain *chn)
 		/* final check by probing function */
 		if (id->probefunc) {
 			DBG(LOWPROBE, ul_debug("\tcall probefunc()"));
-			errno = 0;
 			rc = id->probefunc(pr, mag);
-			blkid_probe_prune_buffers(pr);
 			if (rc != BLKID_PROBE_OK) {
 				blkid_probe_chain_reset_values(pr, chn);
 				if (rc < 0)
@@ -597,7 +591,6 @@ static int blkid_probe_set_usage(blkid_probe pr, int usage)
 			(const unsigned char *) u, strlen(u) + 1);
 }
 
-/* size used by filesystem for data */
 int blkid_probe_set_fssize(blkid_probe pr, uint64_t size)
 {
 	struct blkid_chain *chn = blkid_probe_get_chain(pr);
@@ -630,7 +623,7 @@ int blkid_probe_set_fsblocksize(blkid_probe pr, uint32_t block_size)
 			block_size);
 }
 
-int blkid_probe_set_fsendianness(blkid_probe pr, enum blkid_endianness endianness)
+int blkid_probe_set_fsendianness(blkid_probe pr, enum BLKID_ENDIANNESS endianness)
 {
 	struct blkid_chain *chn = blkid_probe_get_chain(pr);
 	const char *value;

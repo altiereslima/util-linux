@@ -36,10 +36,6 @@ renice_sources = files(
   'renice.c',
 )
 
-setpgid_sources = files(
-  'setpgid.c',
-)
-
 setsid_sources = files(
   'setsid.c',
 )
@@ -59,7 +55,7 @@ fstrim_sources = files(
 dmesg_sources = files(
   'dmesg.c',
 ) + \
-  monotonic_c + pager_c
+  monotonic_c
 
 ctrlaltdel_sources = files(
   'ctrlaltdel.c',
@@ -76,10 +72,6 @@ blkdiscard_sources = files(
 
 blkzone_sources = files(
   'blkzone.c',
-)
-
-blkpr_sources = files(
-  'blkpr.c',
 )
 
 ldattach_sources = files(
@@ -185,9 +177,6 @@ nsenter_sources = files(
 setpriv_sources = files(
   'setpriv.c',
 )
-if LINUX and conf.get('HAVE_LINUX_LANDLOCK_H').to_string() == '1'
-  setpriv_sources += files('setpriv-landlock.c')
-endif
 
 flock_sources = files(
   'flock.c',

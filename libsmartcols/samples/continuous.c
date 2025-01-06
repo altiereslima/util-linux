@@ -45,16 +45,18 @@ fail:
 
 static struct libscols_line *add_line(struct libscols_table *tb, size_t i)
 {
+	char *p;
 	struct libscols_line *ln = scols_table_new_line(tb, NULL);
 
 	if (!ln)
 		err(EXIT_FAILURE, "failed to create output line");
 
-	if (scols_line_sprintf(ln, COL_NUM, "%zu", i))
+	xasprintf(&p, "%zu", i);
+	if (scols_line_refer_data(ln, COL_NUM, p))
 		goto fail;
 
-	if (scols_line_sprintf(ln, COL_DATA,  "data-%02zu-%02zu-%02zu-end",
-			       i + 1, i + 2, i + 3))
+	xasprintf(&p, "data-%02zu-%02zu-%02zu-end", i + 1, i + 2, i + 3);
+	if (scols_line_refer_data(ln, COL_DATA, p))
 		goto fail;
 
 	return ln;
@@ -63,11 +65,11 @@ fail:
 	err(EXIT_FAILURE, "failed to create output line");
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
 	struct libscols_table *tb;
 	size_t i;
-	const size_t timecellsz = 500;
+	const size_t timecellsz = sizeof(stringify_value(UINT_MAX));
 	struct timeval last;
 
 	scols_init_debug(0);
@@ -83,7 +85,7 @@ int main(void)
 		struct libscols_line *line;
 		struct timeval now;
 		int done = 0;
-		char *timecell = xcalloc(1, timecellsz );
+		char *timecell = xmalloc( timecellsz );
 
 		line = add_line(tb, i);
 
@@ -110,7 +112,7 @@ int main(void)
 
 			/* Note that libsmartcols don't print \n for last line
 			 * in the table, but if you print a line somewhere in
-			 * the middle of the table you need
+			 * the midle of the table you need
 			 *
 			 *    scols_table_enable_nolinesep(tb, !done);
 			 *

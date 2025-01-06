@@ -48,9 +48,6 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
-#ifdef HAVE_FNMATCH
-# include <fnmatch.h>
-#endif
 
 #include "xalloc.h"
 #include "nls.h"
@@ -78,8 +75,7 @@ UL_DEBUG_DEFINE_MASKNAMES(whereis) = UL_DEBUG_EMPTY_MASKNAMES;
 #define UL_DEBUG_CURRENT_MASK	UL_DEBUG_MASK(whereis)
 #include "debugobj.h"
 
-static char uflag;
-static char use_glob;
+static char uflag = 0;
 
 /* supported types */
 enum {
@@ -100,7 +96,7 @@ struct wh_dirlist {
 	struct wh_dirlist *next;
 };
 
-static const char *const bindirs[] = {
+static const char *bindirs[] = {
 	"/usr/bin",
 	"/usr/sbin",
 	"/bin",
@@ -161,7 +157,7 @@ static const char *const bindirs[] = {
 	NULL
 };
 
-static const char *const mandirs[] = {
+static const char *mandirs[] = {
 	"/usr/man/*",
 	"/usr/share/man/*",
 	"/usr/X386/man/*",
@@ -172,7 +168,7 @@ static const char *const mandirs[] = {
 	NULL
 };
 
-static const char *const srcdirs[] = {
+static const char *srcdirs[] = {
 	"/usr/src/*",
 	"/usr/src/lib/libc/*",
 	"/usr/src/lib/libc/net/*",
@@ -216,12 +212,11 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -S <dirs>  define sources lookup path\n"), out);
 	fputs(_(" -f         terminate <dirs> argument list\n"), out);
 	fputs(_(" -u         search for unusual entries\n"), out);
-	fputs(_(" -g         interpret name as glob (pathnames pattern)\n"), out);
 	fputs(_(" -l         output effective lookup paths\n"), out);
 
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(16));
-	fprintf(out, USAGE_MAN_TAIL("whereis(1)"));
+	printf(USAGE_HELP_OPTIONS(16));
+	printf(USAGE_MAN_TAIL("whereis(1)"));
 	exit(EXIT_SUCCESS);
 }
 
@@ -355,7 +350,7 @@ static void construct_dirlist_from_argv(struct wh_dirlist **ls,
 
 static void construct_dirlist(struct wh_dirlist **ls,
 			      int type,
-			      const char *const*paths)
+			      const char **paths)
 {
 	size_t i;
 
@@ -399,20 +394,13 @@ static void free_dirlist(struct wh_dirlist **ls0, int type)
 
 static int filename_equal(const char *cp, const char *dp, int type)
 {
-	size_t i;
+	int i = strlen(dp);
 
 	DBG(SEARCH, ul_debug("compare '%s' and '%s'", cp, dp));
 
-#ifdef HAVE_FNMATCH
-	if (use_glob)
-		return fnmatch(cp, dp, 0) == 0;
-#endif
 	if (type & SRC_DIR &&
 	    dp[0] == 's' && dp[1] == '.' && filename_equal(cp, dp + 2, type))
 		return 1;
-
-	i = strlen(dp);
-
 	if (type & MAN_DIR) {
 		if (i > 1 && !strcmp(dp + i - 2, ".Z"))
 			i -= 2;
@@ -646,9 +634,6 @@ int main(int argc, char **argv)
 				break;
 			case 'l':
 				list_dirlist(ls);
-				break;
-			case 'g':
-				use_glob = 1;
 				break;
 
 			case 'V':

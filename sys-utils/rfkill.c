@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: ISC
- *
  * /dev/rfkill userspace tool
  *
  * Copyright 2009 Johannes Berg <johannes@sipsolutions.net>
@@ -21,6 +19,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
 #include <ctype.h>
 #include <getopt.h>
 #include <libsmartcols.h>
@@ -100,7 +99,7 @@ enum {
 	ACT_LIST_OLD
 };
 
-static const char *const rfkill_actions[] = {
+static char *rfkill_actions[] = {
 	[ACT_LIST]	= "list",
 	[ACT_HELP]	= "help",
 	[ACT_EVENT]	= "event",
@@ -142,9 +141,10 @@ static size_t ncolumns;
 
 struct control {
 	struct libscols_table *tb;
-	bool	json,
-		no_headings,
-		raw;
+	unsigned int
+		json:1,
+		no_headings:1,
+		raw:1;
 };
 
 static int column_name_to_id(const char *name, size_t namesz)
@@ -643,7 +643,7 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -r, --raw              use the raw output format\n"), stdout);
 
 	fputs(USAGE_SEPARATOR, stdout);
-	fprintf(stdout, USAGE_HELP_OPTIONS(24));
+	printf(USAGE_HELP_OPTIONS(24));
 
 	fputs(USAGE_COLUMNS, stdout);
 	for (i = 0; i < ARRAY_SIZE(infos); i++)

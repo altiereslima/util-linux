@@ -53,8 +53,7 @@ mkfifo $FIFO
 echo "==Netns ADD" >> $LOG
 if ip netns add $NS &&
 	ip link add name $vetha type veth peer name $vethb &&
-	ip link set $vethb netns $NS &&
-	! (ip -o link show dev $vetha 2>&1 >$NULL | grep 'Cannot talk to rtnetlink' > $NULL); then
+	ip link set $vethb netns $NS; then
     echo "===Netns EXEC" >> $LOG
     ip netns exec $NS dd if=$FIFO bs=1 count=2 of=$NULL 2> $NULL &
     PID=$!

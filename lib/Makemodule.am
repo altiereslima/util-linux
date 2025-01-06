@@ -30,6 +30,7 @@ libcommon_la_SOURCES = \
 	lib/mbsalign.c \
 	lib/mbsedit.c\
 	lib/md5.c \
+	lib/pager.c \
 	lib/pwdutils.c \
 	lib/randutils.c \
 	lib/sha1.c \
@@ -175,12 +176,12 @@ if LINUX
 test_cpuset_SOURCES = lib/cpuset.c
 test_cpuset_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_CPUSET
 
-test_sysfs_SOURCES = lib/sysfs.c lib/path.c lib/fileutils.c lib/buffer.c lib/mbsalign.c
+test_sysfs_SOURCES = lib/sysfs.c lib/path.c lib/fileutils.c
 if HAVE_CPU_SET_T
 test_sysfs_SOURCES += lib/cpuset.c
 endif
 test_sysfs_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_SYSFS
-test_sysfs_LDADD = $(LDADD)
+test_sysfs_LDADD = $(LDADD) libcommon.la
 
 test_procfs_SOURCES = lib/procfs.c lib/path.c lib/fileutils.c lib/strutils.c
 if HAVE_CPU_SET_T
@@ -211,7 +212,7 @@ test_timeutils_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_TIMEUTILS
 test_pwdutils_SOURCES = lib/pwdutils.c
 test_pwdutils_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM
 
-test_remove_env_SOURCES = lib/env.c lib/strv.c lib/strutils.c
+test_remove_env_SOURCES = lib/env.c
 test_remove_env_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM
 
 test_buffer_SOURCES = lib/buffer.c lib/mbsalign.c

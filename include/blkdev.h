@@ -59,17 +59,6 @@
 #  define BLKPBSZGET _IO(0x12,123)
 # endif
 
-/* discard area on a device */
-#ifndef BLKDISCARD
-# define BLKDISCARD	_IO(0x12,119)
-#endif
-#ifndef BLKSECDISCARD
-# define BLKSECDISCARD	_IO(0x12,125)
-#endif
-#ifndef BLKZEROOUT
-# define BLKZEROOUT	_IO(0x12,127)
-#endif
-
 /* discard zeroes support, introduced in 2.6.33 (commit 98262f27) */
 # ifndef BLKDISCARDZEROES
 #  define BLKDISCARDZEROES _IO(0x12,124)
@@ -90,6 +79,7 @@
 # ifndef CDROM_GET_CAPABILITY
 #  define CDROM_GET_CAPABILITY 0x5331
 # endif
+
 #endif /* __linux */
 
 
@@ -141,8 +131,8 @@ int blkdev_is_cdrom(int fd);
 /* get device's geometry - legacy */
 int blkdev_get_geometry(int fd, unsigned int *h, unsigned int *s);
 
-/* SCSI device types.  Copied almost as-is from kernel header
- * (include/scsi/scsi_proto.h). */
+/* SCSI device types.  Copied almost as-is from kernel header.
+ * http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/tree/include/scsi/scsi.h */
 #define SCSI_TYPE_DISK			0x00
 #define SCSI_TYPE_TAPE			0x01
 #define SCSI_TYPE_PRINTER		0x02
@@ -166,9 +156,7 @@ int blkdev_lock(int fd, const char *devname, const char *lockmode);
 #ifdef HAVE_LINUX_BLKZONED_H
 struct blk_zone_report *blkdev_get_zonereport(int fd, uint64_t sector, uint32_t nzones);
 #else
-static inline struct blk_zone_report *blkdev_get_zonereport(int fd __attribute__((unused)),
-							    uint64_t sector __attribute__((unused)),
-							    uint32_t nzones __attribute__((unused)))
+static inline struct blk_zone_report *blkdev_get_zonereport(int fd, uint64_t sector, uint32_t nzones)
 {
 	return NULL;
 }

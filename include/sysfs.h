@@ -1,7 +1,4 @@
 /*
- * No copyright is claimed.  This code is in the public domain; do with
- * it what you wish.
- *
  * Copyright (C) 2011 Karel Zak <kzak@redhat.com>
  */
 #ifndef UTIL_LINUX_SYSFS_H
@@ -87,7 +84,6 @@ char *sysfs_blkdev_get_devchain(struct path_cxt *pc, char *buf, size_t bufsz);
 int sysfs_blkdev_next_subsystem(struct path_cxt *pc __attribute__((unused)), char *devchain, char **subsys);
 
 int sysfs_blkdev_is_hotpluggable(struct path_cxt *pc);
-int sysfs_blkdev_is_removable(struct path_cxt *pc);
 int sysfs_blkdev_get_wholedisk( struct path_cxt *pc,
                                 char *diskname,
                                 size_t len,

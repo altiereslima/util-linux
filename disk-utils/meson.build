@@ -69,8 +69,7 @@ fdisk_sources = files(
   'fdisk.h',
   'fdisk-menu.c',
   'fdisk-list.c',
-  'fdisk-list.h') + \
-  pager_c
+  'fdisk-list.h')
 
 sfdisk_sources = files(
   'sfdisk.c',

@@ -1,7 +1,3 @@
-bits_sources = files(
-  'bits.c',
-)
-
 col_sources = files(
   'col.c',
 )

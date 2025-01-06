@@ -5,8 +5,6 @@
  */
 #include <stdio.h>
 #include <unistd.h>
-#include <err.h>
-#include <stdlib.h>
 
 #include "sha1.h"
 
@@ -25,9 +23,7 @@ int main(void)
 			ul_SHA1Update( &ctx, buf, ret );
 	}
 
-	if(freopen ("/dev/null", "r", stdin) == NULL)
-		err(EXIT_FAILURE, "stdin->null failed!");
-
+	fclose(stdin);
 	ul_SHA1Final( digest, &ctx );
 
 	for (i = 0; i < UL_SHA1LENGTH; i++)

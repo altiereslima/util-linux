@@ -228,14 +228,10 @@ int mnt_fs_follow_optlist(struct libmnt_fs *fs, struct libmnt_optlist *ol)
 
 	if (fs->optlist == ol)
 		return 0;
-	if (fs->optlist)
-		mnt_unref_optlist(fs->optlist);
 
 	fs->opts_age = 0;
 	fs->optlist = ol;
-
-	if (ol)
-		mnt_ref_optlist(ol);
+	mnt_ref_optlist(ol);
 	return 0;
 }
 
@@ -923,11 +919,7 @@ int mnt_fs_set_options(struct libmnt_fs *fs, const char *optstr)
 
 	if (!fs)
 		return -EINVAL;
-
-	if (fs->optlist) {
-		fs->opts_age = 0;
-		return mnt_optlist_set_optstr(fs->optlist, optstr, NULL);
-	}
+	fs->opts_age = 0;
 
 	if (optstr) {
 		int rc = mnt_split_optstr(optstr, &u, &v, &f, 0, 0);
@@ -976,10 +968,8 @@ int mnt_fs_append_options(struct libmnt_fs *fs, const char *optstr)
 		return -EINVAL;
 	if (!optstr)
 		return 0;
-	if (fs->optlist) {
-		fs->opts_age = 0;
-		return mnt_optlist_append_optstr(fs->optlist, optstr, NULL);
-	}
+
+	fs->opts_age = 0;
 
 	rc = mnt_split_optstr(optstr, &u, &v, &f, 0, 0);
 	if (rc)
@@ -1023,10 +1013,7 @@ int mnt_fs_prepend_options(struct libmnt_fs *fs, const char *optstr)
 	if (!optstr)
 		return 0;
 
-	if (fs->optlist) {
-		fs->opts_age = 0;
-		return mnt_optlist_prepend_optstr(fs->optlist, optstr, NULL);
-	}
+	fs->opts_age = 0;
 
 	rc = mnt_split_optstr(optstr, &u, &v, &f, 0, 0);
 	if (rc)
@@ -1454,7 +1441,7 @@ int mnt_fs_get_attribute(struct libmnt_fs *fs, const char *name,
  * mnt_fs_get_comment:
  * @fs: fstab/mtab/mountinfo entry pointer
  *
- * Returns: comment string
+ * Returns: 0 on success, 1 when not found the @name or negative number in case of error.
  */
 const char *mnt_fs_get_comment(struct libmnt_fs *fs)
 {

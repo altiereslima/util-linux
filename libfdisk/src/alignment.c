@@ -227,8 +227,6 @@ int fdisk_override_geometry(struct fdisk_context *cxt,
 			    unsigned int heads,
 			    unsigned int sectors)
 {
-	int rc = 0;
-
 	if (!cxt)
 		return -EINVAL;
 	if (heads)
@@ -241,15 +239,14 @@ int fdisk_override_geometry(struct fdisk_context *cxt,
 	else
 		recount_geometry(cxt);
 
-	rc = fdisk_reset_alignment(cxt);
+	fdisk_reset_alignment(cxt);
 
-	DBG(CXT, ul_debugobj(cxt, "override C/H/S: %u/%u/%u [rc=%d]",
+	DBG(CXT, ul_debugobj(cxt, "override C/H/S: %u/%u/%u",
 		(unsigned) cxt->geom.cylinders,
 		(unsigned) cxt->geom.heads,
-		(unsigned) cxt->geom.sectors,
-		rc));
+		(unsigned) cxt->geom.sectors));
 
-	return rc;
+	return 0;
 }
 
 /**
@@ -368,8 +365,6 @@ int fdisk_has_user_device_geometry(struct fdisk_context *cxt)
 
 int fdisk_apply_user_device_properties(struct fdisk_context *cxt)
 {
-	int rc;
-
 	if (!cxt)
 		return -EINVAL;
 
@@ -400,9 +395,7 @@ int fdisk_apply_user_device_properties(struct fdisk_context *cxt)
 	else if (cxt->user_geom.heads || cxt->user_geom.sectors)
 		recount_geometry(cxt);
 
-	rc = fdisk_reset_alignment(cxt);
-	if (rc)
-		return rc;
+	fdisk_reset_alignment(cxt);
 
 	if (cxt->user_grain) {
 		unsigned long granularity = max(cxt->phy_sector_size, cxt->min_io_size);
@@ -474,7 +467,8 @@ int fdisk_reset_device_properties(struct fdisk_context *cxt)
 	if (rc)
 		return rc;
 
-	return fdisk_apply_user_device_properties(cxt);
+	fdisk_apply_user_device_properties(cxt);
+	return 0;
 }
 
 /*

@@ -56,7 +56,6 @@ struct libmnt_cache {
 	size_t			nents;
 	size_t			nallocs;
 	int			refcount;
-	int			probe_sb_extra;	/* extra BLKID_SUBLKS_* flags */
 
 	/* blkid_evaluate_tag() works in two ways:
 	 *
@@ -171,23 +170,6 @@ int mnt_cache_set_targets(struct libmnt_cache *cache,
 	return 0;
 }
 
-/**
- * mnt_cache_set_sbprobe:
- * @cache: cache pointer
- * @flags: BLKID_SUBLKS_* flags
- *
- * Add extra flags to the libblkid prober. Don't use if not sure.
- *
- * Returns: negative number in case of error, or 0 o success.
- */
-int mnt_cache_set_sbprobe(struct libmnt_cache *cache, int flags)
-{
-	if (!cache)
-		return -EINVAL;
-
-	cache->probe_sb_extra = flags;
-	return 0;
-}
 
 /* note that the @key could be the same pointer as @value */
 static int cache_add_entry(struct libmnt_cache *cache, char *key,
@@ -202,7 +184,7 @@ static int cache_add_entry(struct libmnt_cache *cache, char *key,
 	if (cache->nents == cache->nallocs) {
 		size_t sz = cache->nallocs + MNT_CACHE_CHUNKSZ;
 
-		e = reallocarray(cache->ents, sz, sizeof(struct mnt_cache_entry));
+		e = realloc(cache->ents, sz * sizeof(struct mnt_cache_entry));
 		if (!e)
 			return -ENOMEM;
 		cache->ents = e;
@@ -364,7 +346,7 @@ int mnt_cache_read_tags(struct libmnt_cache *cache, const char *devname)
 	blkid_probe_enable_superblocks(pr, 1);
 	blkid_probe_set_superblocks_flags(pr,
 			BLKID_SUBLKS_LABEL | BLKID_SUBLKS_UUID |
-			BLKID_SUBLKS_TYPE | cache->probe_sb_extra);
+			BLKID_SUBLKS_TYPE);
 
 	blkid_probe_enable_partitions(pr, 1);
 	blkid_probe_set_partitions_flags(pr, BLKID_PARTS_ENTRY_DETAILS);
@@ -588,9 +570,6 @@ char *mnt_resolve_target(const char *path, struct libmnt_cache *cache)
 {
 	char *p = NULL;
 
-	if (!path)
-		return NULL;
-
 	/*DBG(CACHE, ul_debugobj(cache, "resolving target %s", path));*/
 
 	if (!cache || !cache->mountinfo)
@@ -748,9 +727,7 @@ char *mnt_resolve_spec(const char *spec, struct libmnt_cache *cache)
 
 #ifdef TEST_PROGRAM
 
-static int test_resolve_path(struct libmnt_test *ts __attribute__((unused)),
-			     int argc __attribute__((unused)),
-			     char *argv[] __attribute__((unused)))
+static int test_resolve_path(struct libmnt_test *ts, int argc, char *argv[])
 {
 	char line[BUFSIZ];
 	struct libmnt_cache *cache;
@@ -773,9 +750,7 @@ static int test_resolve_path(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_resolve_spec(struct libmnt_test *ts __attribute__((unused)),
-			     int argc __attribute__((unused)),
-			     char *argv[] __attribute__((unused)))
+static int test_resolve_spec(struct libmnt_test *ts, int argc, char *argv[])
 {
 	char line[BUFSIZ];
 	struct libmnt_cache *cache;
@@ -798,9 +773,7 @@ static int test_resolve_spec(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_read_tags(struct libmnt_test *ts __attribute__((unused)),
-			  int argc __attribute__((unused)),
-			  char *argv[] __attribute__((unused)))
+static int test_read_tags(struct libmnt_test *ts, int argc, char *argv[])
 {
 	char line[BUFSIZ];
 	struct libmnt_cache *cache;

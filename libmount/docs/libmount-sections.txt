@@ -9,7 +9,6 @@ mnt_cache_device_has_tag
 mnt_cache_find_tag_value
 mnt_cache_read_tags
 mnt_cache_set_targets
-mnt_cache_set_sbprobe
 mnt_get_fstype
 mnt_pretty_path
 mnt_resolve_path
@@ -36,7 +35,6 @@ mnt_context_enable_force
 mnt_context_enable_fork
 mnt_context_enable_lazy
 mnt_context_enable_loopdel
-mnt_context_enable_noautofs
 mnt_context_enable_onlyonce
 mnt_context_enable_rdonly_umount
 mnt_context_enable_rwonly_mount
@@ -302,8 +300,6 @@ libmnt_lock
 mnt_free_lock
 mnt_lock_file
 mnt_new_lock
-mnt_ref_lock
-mnt_unref_lock
 mnt_unlock_file
 mnt_lock_block_signals
 </SECTION>
@@ -348,7 +344,6 @@ mnt_table_add_fs
 mnt_table_append_intro_comment
 mnt_table_append_trailing_comment
 mnt_table_enable_comments
-mnt_table_enable_noautofs
 mnt_table_find_devno
 mnt_table_find_fs
 mnt_table_find_mountpoint
@@ -369,7 +364,6 @@ mnt_table_get_userdata
 mnt_table_insert_fs
 mnt_table_is_empty
 mnt_table_is_fs_mounted
-mnt_table_is_noautofs
 mnt_table_last_fs
 mnt_table_move_fs
 mnt_table_next_child_fs
@@ -456,6 +450,5 @@ mnt_monitor_get_fd
 mnt_monitor_close_fd
 mnt_monitor_next_change
 mnt_monitor_event_cleanup
-mnt_monitor_veil_kernel
 mnt_monitor_wait
 </SECTION>

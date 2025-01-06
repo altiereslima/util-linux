@@ -21,11 +21,7 @@ config_gen_dir="$top_srcdir/tools"
 
 ts_cd $top_builddir && make -j clean &> /dev/null
 
-wanted=$(ts_option_argument "conf" "$*")
-
-function make_conf {
-	local conf="$1"
-
+for conf in $config_gen_dir/config-gen.d/*.conf; do
 	ts_init_subtest $(basename $conf | sed 's/\.conf//')
 
 	opts=$(ul_get_configuration $conf | sed 's/--enable-asan//')
@@ -69,15 +65,6 @@ function make_conf {
 
 	ts_cd $olddir
 	ts_finalize_subtest
-}
-
-
-if [ -n "$wanted" ]; then
-	make_conf $wanted
-else
-	for x in $config_gen_dir/config-gen.d/*.conf; do
-		make_conf "$x"
-	done
-fi
+done
 
 ts_finalize

@@ -8,7 +8,6 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
-#include <errno.h>
 #include <unistd.h>
 #include <stdint.h>
 
@@ -32,7 +31,6 @@
 # define EBADFD 77		/* File descriptor in bad state */
 #endif
 
-#include "all-io.h"
 #include "blkdev.h"
 #include "c.h"
 #include "linux_version.h"
@@ -45,7 +43,7 @@ blkdev_valid_offset (int fd, off_t offset) {
 
 	if (lseek (fd, offset, 0) < 0)
 		return 0;
-	if (read_all (fd, &ch, 1) < 1)
+	if (read (fd, &ch, 1) < 1)
 		return 0;
 	return 1;
 }
@@ -58,25 +56,23 @@ int is_blkdev(int fd)
 
 off_t
 blkdev_find_size (int fd) {
-	off_t high, low = 0;
+	uintmax_t high, low = 0;
 
 	for (high = 1024; blkdev_valid_offset (fd, high); ) {
-		if (high == SINT_MAX(off_t)) {
-			errno = EFBIG;
+		if (high == UINTMAX_MAX)
 			return -1;
-		}
 
 		low = high;
 
-		if (high >= SINT_MAX(off_t)/2)
-			high = SINT_MAX(off_t);
+		if (high >= UINTMAX_MAX/2)
+			high = UINTMAX_MAX;
 		else
 			high *= 2;
 	}
 
 	while (low < high - 1)
 	{
-		off_t mid = (low + high) / 2;
+		uintmax_t mid = (low + high) / 2;
 
 		if (blkdev_valid_offset (fd, mid))
 			low = mid;
@@ -170,10 +166,8 @@ blkdev_get_size(int fd, unsigned long long *bytes)
 			*bytes = st.st_size;
 			return 0;
 		}
-		if (!S_ISBLK(st.st_mode)) {
-			errno = ENOTBLK;
+		if (!S_ISBLK(st.st_mode))
 			return -1;
-		}
 	}
 
 	*bytes = blkdev_find_size(fd);

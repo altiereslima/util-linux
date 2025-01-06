@@ -36,12 +36,11 @@
 #include <sys/ioctl.h>
 
 #include <ctype.h>
-#include <errno.h>
-#include <stdbool.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <errno.h>
 #include <getopt.h>
 
 #include "nls.h"
@@ -95,116 +94,31 @@ struct column_control {
 	size_t	nents;		/* number of entries */
 	size_t	maxlength;	/* longest input record (line) */
 	size_t  maxncols;	/* maximal number of input columns */
-	size_t  mincolsep;	/* minimal spaces between columns */
 
-	bool	greedy,
-		json,
-		header_repeat,
-		hide_unnamed,
-		maxout : 1,
-		keep_empty_lines,	/* --keep-empty-lines */
-		tab_noheadings,
-		use_spaces;
+	unsigned int greedy :1,
+		     json :1,
+		     header_repeat :1,
+		     hide_unnamed :1,
+		     maxout : 1,
+		     keep_empty_lines :1,	/* --keep-empty-lines */
+		     tab_noheadings :1;
 };
-
-typedef enum {
-	ANSI_CHR = 'A',
-	ANSI_ESC = 0x1b,
-	ANSI_SGR = '[',
-	ANSI_OSC = ']',
-	ANSI_APC = '_',
-	ANSI_BSL = '\\'
-} ansi_esc_states;
-
-/**
- * Count how many characters are non-printable due to ANSI X3.41 escape codes.
- *
- * It detects and count only Fe Escape sequences. These sequences contains characters
- * that normally are printable, but due to being part of a escape sequence are ignored
- * when displayed in console terminals.
- */
-static inline size_t ansi_esc_width(ansi_esc_states *state, size_t *found, const wchar_t *str)
-{
-	switch (*state) {
-	case ANSI_CHR:
-		// ANSI X3.41 escape sequences begin with ESC ( written as \x1b \033 or ^[ )
-		if (*str == 0x1b)
-			*state = ANSI_ESC;
-		// Ignore 1 byte C1 control codes (0x80–0x9F) due to conflict with UTF-8 and CP-1252
-		return 0;
-	case ANSI_ESC:
-		// Fe escape sequences allows the range 0x40 to 0x5f
-		switch (*str) {
-		case '[':  // CSI - Control Sequence Introducer
-			*state = ANSI_SGR;
-			break;
-		case ']':  // OSC - Operating System Command
-			*state = ANSI_OSC;
-			break;
-		case '_':  // APC - Application Program Command
-		case 'P':  // DCS - Device Control String
-		case '^':  // PM  - Privacy Message
-			*state = ANSI_APC;
-			break;
-		default:
-			*state = ANSI_CHR;
-			return 0;
-		}
-		*found = 1;
-		return 0;
-	case ANSI_SGR:
-		*found += 1;
-		// Fe escape sequences allows the range 0x30-0x3f
-		// However SGR (Select Graphic Rendition) only uses: 0-9 ';' ':'
-		if (*str >= '0' && *str <= '?')
-			return 0;
-		// Fe ends with the range 0x40-0x7e but SGR ends with 'm'
-		if (*str <= '@' && *str >= '~')
-			*found = 0;
-		break;
-	case ANSI_APC:
-	case ANSI_OSC:
-		*found += 1;
-#ifdef HAVE_WIDECHAR
-		if (*str == 0x9c || *str == 0x7) // ends with ST (String Terminator) or BEL (\a)
-			break;
-#else
-		if (((unsigned char)*str) == 0x9c || *str == 0x7)
-			break;
-#endif
-		else if (*str == 0x1b) // ends with ESC BACKSLASH
-			*state = ANSI_BSL;
-		return 0;
-	case ANSI_BSL:
-		if (*str == '\\') // ends with BACKSLASH
-			break;
-		*found = 0;
-		return 0;
-	}
-	size_t res = *found;
-	*state = ANSI_CHR;
-	*found = 0;
-	return res;
-}
 
 static size_t width(const wchar_t *str)
 {
-	size_t count = 0;
-	size_t found = 0;
-	ansi_esc_states state = ANSI_CHR;
+	size_t width = 0;
 
 	for (; *str != '\0'; str++) {
 #ifdef HAVE_WIDECHAR
 		int x = wcwidth(*str);	/* don't use wcswidth(), need to ignore non-printable */
 		if (x > 0)
-			count += x;
+			width += x;
 #else
 		if (isprint(*str))
-			count++;
+			width++;
 #endif
-		count -= ansi_esc_width(&state, &found, str);
 	}
-	return count;
+	return width;
 }
 
 static wchar_t *mbs_to_wcs(const char *s)
@@ -599,33 +513,37 @@ static void modify_table(struct column_control *ctl)
 
 static int add_line_to_table(struct column_control *ctl, wchar_t *wcs0)
 {
-	wchar_t *sv = NULL, *wcs = wcs0, *all = NULL;
-	size_t n = 0;
+	wchar_t *wcdata, *sv = NULL, *wcs = wcs0;
+	size_t n = 0, nchars = 0, skip = 0, len;
 	struct libscols_line *ln = NULL;
-
 
 	if (!ctl->tab)
 		init_table(ctl);
 
-	if (ctl->maxncols) {
-		all = wcsdup(wcs0);
-		if (!all)
-			err(EXIT_FAILURE, _("failed to allocate input line"));
-	}
+	len = wcslen(wcs0);
 
 	do {
 		char *data;
-		wchar_t *wcdata = local_wcstok(ctl, wcs, &sv);
+
+		if (ctl->maxncols && n + 1 == ctl->maxncols) {
+			if (nchars + skip < len)
+				wcdata = wcs0 + (nchars + skip);
+			else
+				wcdata = NULL;
+		} else {
+			wcdata = local_wcstok(ctl, wcs, &sv);
+
+			/* For the default separator ('greedy' mode) it uses
+			 * strtok() and it skips leading white chars. In this
+			 * case we need to remember size of the ignored white
+			 * chars due to wcdata calculation in maxncols case */
+			if (wcdata && ctl->greedy
+			    && n == 0 && nchars == 0 && wcdata > wcs)
+				skip = wcdata - wcs;
+		}
 
 		if (!wcdata)
 			break;
-
-		if (ctl->maxncols && n + 1 == ctl->maxncols) {
-			/* Use rest of the string as column data */
-			size_t skip = wcdata - wcs0;
-			wcdata = all + skip;
-		}
-
 		if (scols_table_get_ncols(ctl->tab) < n + 1) {
 			if (scols_table_is_json(ctl->tab) && !ctl->hide_unnamed)
 				errx(EXIT_FAILURE, _("line %zu: for JSON the name of the "
@@ -641,6 +559,8 @@ static int add_line_to_table(struct column_control *ctl, wchar_t *wcs0)
 				err(EXIT_FAILURE, _("failed to allocate output line"));
 		}
 
+		nchars += wcslen(wcdata) + 1;
+
 		data = wcs_to_mbs(wcdata);
 		if (!data)
 			err(EXIT_FAILURE, _("failed to allocate output data"));
@@ -652,7 +572,6 @@ static int add_line_to_table(struct column_control *ctl, wchar_t *wcs0)
 			break;
 	} while (1);
 
-	free(all);
 	return 0;
 }
 
@@ -671,7 +590,7 @@ static void add_entry(struct column_control *ctl, size_t *maxents, wchar_t *wcs)
 {
 	if (ctl->nents <= *maxents) {
 		*maxents += 1000;
-		ctl->ents = xreallocarray(ctl->ents, *maxents, sizeof(wchar_t *));
+		ctl->ents = xrealloc(ctl->ents, *maxents * sizeof(wchar_t *));
 	}
 	ctl->ents[ctl->nents] = wcs;
 	ctl->nents++;
@@ -748,25 +667,17 @@ static int read_input(struct column_control *ctl, FILE *fp)
 		}
 	} while (rc == 0);
 
-	free(buf);
-
 	return rc;
 }
 
 
 static void columnate_fillrows(struct column_control *ctl)
 {
-	size_t chcnt, col, cnt, endcol, numcols, remains;
+	size_t chcnt, col, cnt, endcol, numcols;
 	wchar_t **lp;
 
-	if (ctl->use_spaces)
-		ctl->maxlength += ctl->mincolsep;
-	else
-		ctl->maxlength = (ctl->maxlength + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1);
+	ctl->maxlength = (ctl->maxlength + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1);
 	numcols = ctl->termwidth / ctl->maxlength;
-	remains = ctl->termwidth % ctl->maxlength;
-	if (ctl->use_spaces && remains + ctl->mincolsep >= ctl->maxlength)
-		numcols++;
 	endcol = ctl->maxlength;
 	for (chcnt = col = 0, lp = ctl->ents; /* nothing */; ++lp) {
 		fputws(*lp, stdout);
@@ -778,16 +689,9 @@ static void columnate_fillrows(struct column_control *ctl)
 			endcol = ctl->maxlength;
 			putwchar('\n');
 		} else {
-			if (ctl->use_spaces) {
-				while (chcnt < endcol) {
-					putwchar(' ');
-					chcnt++;
-				}
-			} else {
-				while ((cnt = ((chcnt + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1))) <= endcol) {
-					putwchar('\t');
-					chcnt = cnt;
-				}
+			while ((cnt = ((chcnt + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1))) <= endcol) {
+				putwchar('\t');
+				chcnt = cnt;
 			}
 			endcol += ctl->maxlength;
 		}
@@ -798,18 +702,12 @@ static void columnate_fillrows(struct column_control *ctl)
 
 static void columnate_fillcols(struct column_control *ctl)
 {
-	size_t base, chcnt, cnt, col, endcol, numcols, numrows, row, remains;
+	size_t base, chcnt, cnt, col, endcol, numcols, numrows, row;
 
-	if (ctl->use_spaces)
-		ctl->maxlength += ctl->mincolsep;
-	else
-		ctl->maxlength = (ctl->maxlength + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1);
+	ctl->maxlength = (ctl->maxlength + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1);
 	numcols = ctl->termwidth / ctl->maxlength;
-	remains = ctl->termwidth % ctl->maxlength;
 	if (!numcols)
 		numcols = 1;
-	if (ctl->use_spaces && remains + ctl->mincolsep >= ctl->maxlength)
-		numcols++;
 	numrows = ctl->nents / numcols;
 	if (ctl->nents % numcols)
 		++numrows;
@@ -821,16 +719,9 @@ static void columnate_fillcols(struct column_control *ctl)
 			chcnt += width(ctl->ents[base]);
 			if ((base += numrows) >= ctl->nents)
 				break;
-			if (ctl->use_spaces) {
-				while (chcnt < endcol) {
-					putwchar(' ');
-					chcnt++;
-				}
-			} else {
-				while ((cnt = ((chcnt + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1))) <= endcol) {
-					putwchar('\t');
-					chcnt = cnt;
-				}
+			while ((cnt = ((chcnt + TABCHAR_CELLS) & ~(TABCHAR_CELLS - 1))) <= endcol) {
+				putwchar('\t');
+				chcnt = cnt;
 			}
 			endcol += ctl->maxlength;
 		}
@@ -887,12 +778,11 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -o, --output-separator <string>  columns separator for table output (default is two spaces)\n"), out);
 	fputs(_(" -s, --separator <string>         possible table delimiters\n"), out);
 	fputs(_(" -x, --fillrows                   fill rows before columns\n"), out);
-	fputs(_(" -S, --use-spaces <number>        minimal whitespaces between columns (no tabs)\n"), out);
 
 
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(34));
-	fprintf(out, USAGE_MAN_TAIL("column(1)"));
+	printf(USAGE_HELP_OPTIONS(34));
+	printf(USAGE_MAN_TAIL("column(1)"));
 
 	exit(EXIT_SUCCESS);
 }
@@ -936,7 +826,6 @@ int main(int argc, char **argv)
 		{ "tree",                required_argument, NULL, 'r' },
 		{ "tree-id",             required_argument, NULL, 'i' },
 		{ "tree-parent",         required_argument, NULL, 'p' },
-		{ "use-spaces",          required_argument, NULL, 'S' },
 		{ "version",             no_argument,       NULL, 'V' },
 		{ NULL,	0, NULL, 0 },
 	};
@@ -956,7 +845,7 @@ int main(int argc, char **argv)
 	ctl.output_separator = "  ";
 	ctl.input_separator = mbs_to_wcs("\t ");
 
-	while ((c = getopt_long(argc, argv, "C:c:dE:eH:hi:Jl:LN:n:mO:o:p:R:r:S:s:T:tVW:x", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "C:c:dE:eH:hi:Jl:LN:n:mO:o:p:R:r:s:T:tVW:x", longopts, NULL)) != -1) {
 
 		err_exclusive_options(c, longopts, excl, excl_st);
 
@@ -1022,10 +911,6 @@ int main(int argc, char **argv)
 			break;
 		case 'r':
 			ctl.tree = optarg;
-			break;
-		case 'S':
-			ctl.use_spaces = 1;
-			ctl.mincolsep = strtou32_or_err(optarg, _("invalid spaces argument"));
 			break;
 		case 's':
 			free(ctl.input_separator);

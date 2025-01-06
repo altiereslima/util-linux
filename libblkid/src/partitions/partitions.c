@@ -87,14 +87,14 @@
  *  <programlisting>
  * blkid_probe pr;
  * blkid_partlist ls;
- * int nparts = 0, i;
+ * int nparts, i;
  *
  * pr = blkid_new_probe_from_filename(devname);
  * if (!pr)
  *	err("%s: failed to open device", devname);
+ *
  * ls = blkid_probe_get_partitions(pr);
- * if (ls)
- *	nparts = blkid_partlist_numof_partitions(ls);
+ * nparts = blkid_partlist_numof_partitions(ls);
  *
  * for (i = 0; i < nparts; i++) {
  *      blkid_partition par = blkid_partlist_get_partition(ls, i);
@@ -232,11 +232,6 @@ int blkid_probe_set_partitions_flags(blkid_probe pr, int flags)
 {
 	pr->chains[BLKID_CHAIN_PARTS].flags = flags;
 	return 0;
-}
-
-int blkid_probe_get_partitions_flags(blkid_probe pr)
-{
-	return pr->chains[BLKID_CHAIN_PARTS].flags;
 }
 
 /**
@@ -436,8 +431,8 @@ static blkid_partition new_partition(blkid_partlist ls, blkid_parttable tab)
 		/* Linux kernel has DISK_MAX_PARTS=256, but it's too much for
 		 * generic Linux machine -- let start with 32 partitions.
 		 */
-		void *tmp = reallocarray(ls->parts, ls->nparts_max + 32,
-					 sizeof(struct blkid_struct_partition));
+		void *tmp = realloc(ls->parts, (ls->nparts_max + 32) *
+					sizeof(struct blkid_struct_partition));
 		if (!tmp)
 			return NULL;
 		ls->parts = tmp;
@@ -555,9 +550,7 @@ static int idinfo_probe(blkid_probe pr, const struct blkid_idinfo *id,
 	if (id->probefunc) {
 		DBG(LOWPROBE, ul_debug(
 			"%s: ---> call probefunc()", id->name));
-		errno = 0;
 		rc = id->probefunc(pr, mag);
-		blkid_probe_prune_buffers(pr);
 		if (rc < 0) {
 			/* reset after error */
 			reset_partlist(blkid_probe_get_partlist(pr));

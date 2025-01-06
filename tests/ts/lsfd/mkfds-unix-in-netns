@@ -15,13 +15,12 @@
 # GNU General Public License for more details.
 #
 TS_TOPDIR="${0%/*}/../.."
-TS_DESC="UNIX sockets made in a different net namespace"
+TS_DESC="UNIX sockets made in a differenct net namespace"
 
 . "$TS_TOPDIR"/functions.sh
 ts_init "$*"
 ts_skip_nonroot
-
-. "$TS_SELF/lsfd-functions.bash"
+ts_skip_qemu_user
 
 ts_check_test_command "$TS_CMD_LSFD"
 
@@ -47,7 +46,7 @@ compare_net_namespaces()
     sock_netns=$(${TS_CMD_LSFD} -n -o SOCK.NETNS -p "${pid}" -Q '(FD == 5)')
 
     if [[ "${altns_inode}" == "${sock_netns}" ]]; then
-	echo "the netns for the $type socket is extracted as expected"
+	echo "the netns for the $type socket is extracted as expectedly"
     else
 	echo "the netns for the $type socket is not extracted well"
 	echo "altns_inode=${altns_inode}"
@@ -55,32 +54,22 @@ compare_net_namespaces()
     fi
 }
 
-strip_type_stream()
 {
-    if [ "$1" = stream ]; then
-	lsfd_strip_type_stream
-    else
-	cat
-    fi
-}
-
-for t in stream dgram seqpacket; do
-    ts_init_subtest "$t"
-    {
+    for t in stream dgram seqpacket; do
 	coproc MKFDS { "$TS_HELPER_MKFDS" unix-in-netns $FDSELFNS $FDALTNS $FDSOCK \
 					  path=test_mkfds-unix-$t-ns \
 					  type=$t ; }
 	if read -r -u "${MKFDS[0]}" PID; then
 	    ${TS_CMD_LSFD} -n \
 			   -o ASSOC,STTYPE,NAME,SOCK.STATE,SOCK.TYPE,SOCK.LISTENING,UNIX.PATH \
-			   -p "${PID}" -Q "${EXPR}" | strip_type_stream $t
-	    echo 'ASSOC,STTYPE,NAME,SOCK.STATE,SOCK.TYPE,SOCK.LISTENING,UNIX.PATH': ${PIPESTATUS[0]}
+			   -p "${PID}" -Q "${EXPR}"
+	    echo 'ASSOC,STTYPE,NAME,SOCK.STATE,SOCK.TYPE,SOCK.LISTENING,UNIX.PATH': $?
 
 	    compare_net_namespaces "$t" "${PID}"
 
-	    echo DONE >&"${MKFDS[1]}"
+	    kill -CONT "${PID}"
+	    wait "${MKFDS_PID}"
 	fi
-	wait "${MKFDS_PID}"
 
 	coproc MKFDS { "$TS_HELPER_MKFDS" unix-in-netns $FDSELFNS $FDALTNS $FDSOCK \
 					  path=test_mkfds-unix-$t-ns \
@@ -89,21 +78,15 @@ for t in stream dgram seqpacket; do
 	if read -r -u "${MKFDS[0]}" PID; then
 	    ${TS_CMD_LSFD} -n \
 			   -o ASSOC,STTYPE,NAME,SOCK.STATE,SOCK.TYPE,SOCK.LISTENING,UNIX.PATH \
-			   -p "${PID}" -Q "${EXPR}" | strip_type_stream $t
-	    echo 'ASSOC,STTYPE,NAME,SOCK.STATE,SOCK.TYPE,SOCK.LISTENING,UNIX.PATH': ${PIPESTATUS[0]}
+			   -p "${PID}" -Q "${EXPR}"
+	    echo 'ASSOC,STTYPE,NAME,SOCK.STATE,SOCK.TYPE,SOCK.LISTENING,UNIX.PATH': $?
 
 	    compare_net_namespaces "abstract $t" "${PID}"
 
-	    echo DONE >&"${MKFDS[1]}"
+	    kill -CONT "${PID}"
+	    wait "${MKFDS_PID}"
 	fi
-	wait "${MKFDS_PID}"
-    } > "$TS_OUTPUT" 2>&1
-    if [ "$?" == "$EPERM" ]; then
-	ts_skip_subtest "unshare(2) is not permitted on this platform"
-	continue
-    fi
-    ts_finalize_subtest
-done
-
+    done
+} > "$TS_OUTPUT" 2>&1
 
 ts_finalize

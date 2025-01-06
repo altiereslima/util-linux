@@ -1,12 +1,4 @@
 /*
- *
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
  * fsck --- A generic, parallelizing front-end for the fsck program.
  * It will automatically try to run fsck programs in parallel if the
  * devices are on separate spindles.  It is based on the same ideas as
@@ -28,7 +20,11 @@
  *	         2001, 2002, 2003, 2004, 2005 by  Theodore Ts'o.
  *
  * Copyright (C) 2009-2014 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be redistributed under the terms of the GNU Public
+ * License.
  */
+
 #define _XOPEN_SOURCE 600 /* for inclusion of sa_handler in Solaris */
 
 #include <sys/types.h>
@@ -75,14 +71,14 @@
 
 #define FSCK_RUNTIME_DIRNAME	"/run/fsck"
 
-static const char *const ignored_types[] = {
+static const char *ignored_types[] = {
 	"ignore",
 	"iso9660",
 	"sw",
 	NULL
 };
 
-static const char *const really_wanted[] = {
+static const char *really_wanted[] = {
 	"minix",
 	"ext2",
 	"ext3",
@@ -99,9 +95,9 @@ struct fsck_fs_data
 {
 	const char	*device;
 	dev_t		disk;
-	bool		stacked,
-			done,
-			eval_device;
+	unsigned int	stacked:1,
+			done:1,
+			eval_device:1;
 };
 
 /*
@@ -153,7 +149,7 @@ static FILE *report_stats_file;
 static int num_running;
 static int max_running;
 
-static volatile sig_atomic_t cancel_requested;
+static volatile int cancel_requested;
 static int kill_sent;
 static char *fstype;
 static struct fsck_instance *instance_list;
@@ -594,7 +590,7 @@ static int progress_active(void)
  */
 static void print_stats(struct fsck_instance *inst)
 {
-	struct timeval delta = { 0 };
+	struct timeval delta;
 
 	if (!inst || !report_stats || noexecute)
 		return;
@@ -902,7 +898,7 @@ static int wait_many(int flags)
  * If the type isn't specified by the user, then use either the type
  * specified in /etc/fstab, or DEFAULT_FSTYPE.
  */
-static int fsck_device(struct libmnt_fs *fs, int interactive, int warn_notfound)
+static int fsck_device(struct libmnt_fs *fs, int interactive)
 {
 	char *progname, *progpath;
 	const char *type;
@@ -929,9 +925,6 @@ static int fsck_device(struct libmnt_fs *fs, int interactive, int warn_notfound)
 			retval = ENOENT;
 			goto err;
 		}
-		if (warn_notfound)
-			warnx(_("fsck.%s not found; ignore %s"), type,
-					fs_get_device(fs));
 		return 0;
 	}
 
@@ -1097,7 +1090,7 @@ static int device_exists(const char *device)
 
 static int fs_ignored_type(struct libmnt_fs *fs)
 {
-	const char *const*ip, *type;
+	const char **ip, *type;
 
 	if (!mnt_fs_is_regularfs(fs))
 		return 1;
@@ -1290,7 +1283,7 @@ static int check_all(void)
 			if (!skip_root &&
 			    !fs_is_done(fs) &&
 			    !(ignore_mounted && is_mounted(fs))) {
-				status |= fsck_device(fs, 1, 0);
+				status |= fsck_device(fs, 1);
 				status |= wait_many(FLAG_WAIT_ALL);
 				if (status > FSCK_EX_NONDESTRUCT) {
 					mnt_free_iter(itr);
@@ -1353,7 +1346,7 @@ static int check_all(void)
 			/*
 			 * Spawn off the fsck process
 			 */
-			status |= fsck_device(fs, serialize, 0);
+			status |= fsck_device(fs, serialize);
 			fs_set_done(fs);
 
 			/*
@@ -1419,17 +1412,17 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -V         explain what is being done\n"), out);
 
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, " -?, --help     %s\n", USAGE_OPTSTR_HELP);
-	fprintf(out, "     --version  %s\n", USAGE_OPTSTR_VERSION);
+	printf( " -?, --help     %s\n", USAGE_OPTSTR_HELP);
+	printf( "     --version  %s\n", USAGE_OPTSTR_VERSION);
 	fputs(USAGE_SEPARATOR, out);
 	fputs(_("See the specific fsck.* commands for available fs-options."), out);
-	fprintf(out, USAGE_MAN_TAIL("fsck(8)"));
+	printf(USAGE_MAN_TAIL("fsck(8)"));
 	exit(FSCK_EX_OK);
 }
 
 static void signal_cancel(int sig __attribute__((__unused__)))
 {
-	cancel_requested = 1;
+	cancel_requested++;
 }
 
 static void parse_argv(int argc, char *argv[])
@@ -1637,16 +1630,6 @@ int main(int argc, char *argv[])
 	mnt_init_debug(0);		/* init libmount debug mask */
 	mntcache = mnt_new_cache();	/* no fatal error if failed */
 
-	if (mntcache)
-		/* Force libblkid to accept also filesystems with bad
-		 * checksums. This feature is helpful for "fsck /dev/foo," but
-		 * if it evaluates LABEL/UUIDs from fstab, then libmount may
-		 * use cached data from udevd and udev accepts only properly
-		 * detected filesystems.
-		 */
-		mnt_cache_set_sbprobe(mntcache, BLKID_SUBLKS_BADCSUM);
-
-
 	parse_argv(argc, argv);
 
 	if (!notitle)
@@ -1691,7 +1674,7 @@ int main(int argc, char *argv[])
 			continue;
 		if (ignore_mounted && is_mounted(fs))
 			continue;
-		status |= fsck_device(fs, interactive, interactive);
+		status |= fsck_device(fs, interactive);
 		if (serialize ||
 		    (max_running && (num_running >= max_running))) {
 			struct fsck_instance *inst;

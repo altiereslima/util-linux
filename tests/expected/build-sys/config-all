@@ -45,7 +45,6 @@ wipefs:  libblkid libsmartcols
 zramctl:  libsmartcols 
 addpart:  
 agetty:  
-blkpr:  
 blkzone:  
 blockdev:  
 cal:  libtinfo 
@@ -61,7 +60,6 @@ colrm:
 ctrlaltdel:  
 delpart:  
 dmesg:  libtinfo 
-fadvise:  
 fallocate:  
 fdformat:  
 flock:  
@@ -96,7 +94,6 @@ newgrp:  libcrypt
 nologin:  
 nsenter:  
 pg:  libncursesw libtinfo 
-pipesz:  
 pivot_root:  
 readprofile:  
 rename:  
@@ -110,7 +107,6 @@ scriptlive:
 scriptreplay:  
 setarch:  
 setpriv:  libcap-ng 
-setpgid:  
 setsid:  
 setterm:  libtinfo 
 su:  libpam libpam_misc 
@@ -123,7 +119,6 @@ ul:  libtinfo
 unshare:  
 utmpdump:  
 vipw:  
-waitpid:  
 wall:  
 whereis:  
 write:  

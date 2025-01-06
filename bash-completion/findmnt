@@ -106,12 +106,10 @@ _findmnt_module()
 				--ascii
 				--canonicalize
 				--df
-				--dfi
 				--direction
 				--evaluate
 				--tab-file
 				--first-only
-				--hyperlink
 				--invert
 				--json
 				--list
@@ -133,7 +131,6 @@ _findmnt_module()
 				--tree
 				--real
 				--pseudo
-				--list-columns
 				--version"
 			COMPREPLY=( $(compgen -W "${OPTS[*]}" -- $cur) )
 			return 0

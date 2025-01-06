@@ -4,7 +4,7 @@
  * This file may be redistributed under the terms of the
  * GNU Lesser General Public License
  *
- * https://docs.kernel.org/filesystems/erofs.html
+ * https://www.kernel.org/doc/html/latest/filesystems/erofs.html
  */
 #include <stddef.h>
 #include <string.h>
@@ -46,7 +46,7 @@ static int erofs_verify_checksum(blkid_probe pr, const struct blkid_idmag *mag,
 {
 	uint32_t expected, csum;
 	size_t csummed_size;
-	const unsigned char *csummed;
+	unsigned char *csummed;
 
 	if (!(le32_to_cpu(sb->feature_compat) & EROFS_FEATURE_SB_CSUM))
 		return 1;
@@ -58,16 +58,15 @@ static int erofs_verify_checksum(blkid_probe pr, const struct blkid_idmag *mag,
 	if (!csummed)
 		return 0;
 
-	csum = ul_crc32c_exclude_offset(~0L, csummed, csummed_size,
-			                offsetof(struct erofs_super_block, checksum),
-					sizeof_member(struct erofs_super_block, checksum));
+	memset(csummed + offsetof(struct erofs_super_block, checksum), 0, sizeof(uint32_t));
+	csum = crc32c(~0L, csummed, csummed_size);
 
 	return blkid_probe_verify_csum(pr, csum, expected);
 }
 
 static int probe_erofs(blkid_probe pr, const struct blkid_idmag *mag)
 {
-	const struct erofs_super_block *sb;
+	struct erofs_super_block *sb;
 
 	sb = blkid_probe_get_sb(pr, mag, struct erofs_super_block);
 	if (!sb)

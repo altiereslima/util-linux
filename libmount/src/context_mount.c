@@ -15,16 +15,23 @@
  * @title: Mount context
  * @short_description: high-level API to mount operation.
  */
+
+#ifdef HAVE_LIBSELINUX
+#include <selinux/selinux.h>
+#include <selinux/context.h>
+#endif
+
 #include <sys/wait.h>
 #include <sys/mount.h>
 
+#include "linux_version.h"
 #include "mountP.h"
 #include "strutils.h"
 
-#if defined(HAVE_SMACK)
-static int is_option(const char *name, const char *const *names)
+#if defined(HAVE_LIBSELINUX) || defined(HAVE_SMACK)
+static int is_option(const char *name, const char **names)
 {
-	const char *const *p;
+	const char **p;
 
 	for (p = names; p && *p; p++) {
 		if (strcmp(name, *p) == 0)
@@ -32,7 +39,7 @@ static int is_option(const char *name, const char *const *names)
 	}
 	return 0;
 }
-#endif /* HAVE_SMACK */
+#endif /* HAVE_LIBSELINUX || HAVE_SMACK */
 
 /*
  * this has to be called after mnt_context_evaluate_permissions()
@@ -44,7 +51,9 @@ static int fix_optstr(struct libmnt_context *cxt)
 	struct libmnt_ns *ns_old;
 	const char *val;
 	int rc = 0;
-
+#ifdef HAVE_LIBSELINUX
+	int se_fix = 0, se_rem = 0;
+#endif
 	assert(cxt);
 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
 
@@ -111,12 +120,68 @@ static int fix_optstr(struct libmnt_context *cxt)
 	if (!mnt_context_switch_ns(cxt, ns_old))
 		return -MNT_ERR_NAMESPACE;
 
+#ifdef HAVE_LIBSELINUX
+	if (!is_selinux_enabled())
+		/* Always remove SELinux garbage if SELinux disabled */
+		se_rem = 1;
+	else if (mnt_optlist_is_remount(ol))
+		/*
+		 * Linux kernel < 2.6.39 does not support remount operation
+		 * with any selinux specific mount options.
+		 *
+		 * Kernel 2.6.39 commits:  ff36fe2c845cab2102e4826c1ffa0a6ebf487c65
+		 *                         026eb167ae77244458fa4b4b9fc171209c079ba7
+		 * fix this odd behavior, so we don't have to care about it in
+		 * userspace.
+		 */
+		se_rem = get_linux_version() < KERNEL_VERSION(2, 6, 39);
+	else
+		/* For normal mount, contexts are translated */
+		se_fix = 1;
+
+	/* Fix SELinux contexts */
+	if (se_rem || se_fix) {
+		static const char *selinux_options[] = {
+			"context",
+			"fscontext",
+			"defcontext",
+			"rootcontext",
+			"seclabel",
+			NULL
+		};
+		struct libmnt_iter itr;
+
+		mnt_reset_iter(&itr, MNT_ITER_FORWARD);
+
+		while (mnt_optlist_next_opt(ol, &itr, &opt) == 0) {
+			if (!is_option(mnt_opt_get_name(opt), selinux_options))
+				continue;
+			if (se_rem)
+				rc = mnt_optlist_remove_opt(ol, opt);
+			else if (se_fix && mnt_opt_has_value(opt)) {
+				const char *val = mnt_opt_get_value(opt);
+				char *raw = NULL;
+
+				rc = selinux_trans_to_raw_context(val, &raw);
+				if (rc == -1 || !raw)
+					rc = -EINVAL;
+				if (!rc)
+					rc = mnt_opt_set_quoted_value(opt, raw);
+				if (raw)
+					freecon(raw);
+			}
+			if (rc)
+				goto done;
+		}
+	}
+#endif
+
 #ifdef HAVE_SMACK
 	/* Fix Smack */
 	if (access("/sys/fs/smackfs", F_OK) != 0) {
 		struct libmnt_iter itr;
 
-		static const char *const smack_options[] = {
+		static const char *smack_options[] = {
 			"smackfsdef",
 			"smackfsfloor",
 			"smackfshat",
@@ -135,7 +200,7 @@ static int fix_optstr(struct libmnt_context *cxt)
 		}
 	}
 #endif
-	rc = mnt_context_call_hooks(cxt, MNT_STAGE_PREP_OPTIONS);
+	mnt_context_call_hooks(cxt, MNT_STAGE_PREP_OPTIONS);
 done:
 	DBG(CXT, ul_debugobj(cxt, "<-- preparing options done [rc=%d]", rc));
 	cxt->flags |= MNT_FL_MOUNTOPTS_FIXED;
@@ -155,8 +220,6 @@ done:
 static int evaluate_permissions(struct libmnt_context *cxt)
 {
 	struct libmnt_optlist *ol;
-	struct libmnt_opt *opt = NULL;
-
 	unsigned long user_flags = 0;	/* userspace mount flags */
 	int rc;
 
@@ -177,63 +240,16 @@ static int evaluate_permissions(struct libmnt_context *cxt)
 	if (rc)
 		return rc;
 
-	/*
-	* Ignore user=<name> (if <name> is set). Let's keep it hidden
-	* for normal library operations, but visible for /sbin/mount.<type>
-	* helpers.
-	*/
-	if (user_flags & MNT_MS_USER
-	    && (opt = mnt_optlist_get_opt(ol, MNT_MS_USER, cxt->map_userspace))
-	    && mnt_opt_has_value(opt)) {
-		DBG(CXT, ul_debugobj(cxt, "perms: user=<name> detected, ignore"));
-
-		cxt->flags |= MNT_FL_SAVED_USER;
-
-		mnt_opt_set_external(opt, 1);
-		user_flags &= ~MNT_MS_USER;
-	}
-
 	if (!mnt_context_is_restricted(cxt)) {
 		/*
 		 * superuser mount
-		 *
-		 * Let's convert user, users, owenr and groups to MS_* flags
-		 * to be compatible with non-root execution.
-		 *
-		 * The old deprecated way is to use mnt_optstr_get_flags().
 		 */
 		if (user_flags & (MNT_MS_OWNER | MNT_MS_GROUP))
-			rc = mnt_optlist_remove_flags(ol,
+			mnt_optlist_remove_flags(ol,
 					MNT_MS_OWNER | MNT_MS_GROUP, cxt->map_userspace);
-
-		if (!rc && (user_flags & MNT_MS_OWNER))
-			rc = mnt_optlist_insert_flags(ol,
-					MS_OWNERSECURE, cxt->map_linux,
-					MNT_MS_OWNER, cxt->map_userspace);
-
-		if (!rc && (user_flags & MNT_MS_GROUP))
-			rc = mnt_optlist_insert_flags(ol,
-					MS_OWNERSECURE, cxt->map_linux,
-					MNT_MS_GROUP, cxt->map_userspace);
-
-		if (!rc && (user_flags & MNT_MS_USER)
-		    && (opt = mnt_optlist_get_opt(ol, MNT_MS_USER, cxt->map_userspace))
-		    && !mnt_opt_has_value(opt))
-			rc = mnt_optlist_insert_flags(ol, MS_SECURE, cxt->map_linux,
-					MNT_MS_USER, cxt->map_userspace);
-
-		if (!rc && (user_flags & MNT_MS_USERS))
-			rc = mnt_optlist_insert_flags(ol, MS_SECURE, cxt->map_linux,
-					MNT_MS_USERS, cxt->map_userspace);
-
-		DBG(CXT, ul_debugobj(cxt, "perms: superuser [rc=%d]", rc));
-		if (rc)
-			return rc;
-
-		if (user_flags & (MNT_MS_OWNER | MNT_MS_GROUP |
-				  MNT_MS_USER | MNT_MS_USERS))
-			mnt_optlist_merge_opts(ol);
+		DBG(CXT, ul_debugobj(cxt, "perms: superuser"));
 	} else {
+		struct libmnt_opt *opt;
 
 		/*
 		 * user mount
@@ -242,6 +258,22 @@ static int evaluate_permissions(struct libmnt_context *cxt)
 		{
 			DBG(CXT, ul_debugobj(cxt, "perms: fstab not applied, ignore user mount"));
 			return -EPERM;
+		}
+
+		/*
+		* Ignore user=<name> (if <name> is set). Let's keep it hidden
+		* for normal library operations, but visible for /sbin/mount.<type>
+		* helpers.
+		*/
+		if (user_flags & MNT_MS_USER
+		    && (opt = mnt_optlist_get_opt(ol, MNT_MS_USER, cxt->map_userspace))
+		    && mnt_opt_has_value(opt)) {
+			DBG(CXT, ul_debugobj(cxt, "perms: user=<name> detected, ignore"));
+
+			cxt->flags |= MNT_FL_SAVED_USER;
+
+			mnt_opt_set_external(opt, 1);
+			user_flags &= ~MNT_MS_USER;
 		}
 
 		/*
@@ -377,7 +409,9 @@ int mnt_context_mount_setopt(struct libmnt_context *cxt, int c, char *arg)
 
 static int exec_helper(struct libmnt_context *cxt)
 {
+	struct libmnt_optlist *ol;
 	struct libmnt_ns *ns_tgt = mnt_context_get_target_ns(cxt);
+	const char *o = NULL;
 	char *namespace = NULL;
 	int rc;
 	pid_t pid;
@@ -388,6 +422,14 @@ static int exec_helper(struct libmnt_context *cxt)
 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
 
 	DBG(CXT, ul_debugobj(cxt, "mount: executing helper %s", cxt->helper));
+
+	ol = mnt_context_get_optlist(cxt);
+	if (!ol)
+		return -ENOMEM;
+
+	rc = mnt_optlist_get_optstr(ol, &o, NULL, MNT_OL_FLTR_HELPERS);
+	if (rc)
+		return rc;
 
 	if (ns_tgt->fd != -1
 	    && asprintf(&namespace, "/proc/%i/fd/%i",
@@ -402,23 +444,7 @@ static int exec_helper(struct libmnt_context *cxt)
 	case 0:
 	{
 		const char *args[14], *type;
-		struct libmnt_optlist *ol = mnt_context_get_optlist(cxt);
-		struct libmnt_opt *opt;
-		const char *o = NULL;
 		int i = 0;
-
-		if (!ol)
-			_exit(EXIT_FAILURE);
-
-		/* Call helper with original user=<name> (aka "saved user")
-		 * or remove the username at all.
-		 */
-		opt = mnt_optlist_get_opt(ol, MNT_MS_USER, cxt->map_userspace);
-		if (opt && !(cxt->flags & MNT_FL_SAVED_USER))
-			mnt_opt_set_value(opt, NULL);
-
-		if (mnt_optlist_get_optstr(ol, &o, NULL, MNT_OL_FLTR_HELPERS))
-			_exit(EXIT_FAILURE);
 
 		if (drop_permissions() != 0)
 			_exit(EXIT_FAILURE);
@@ -429,40 +455,38 @@ static int exec_helper(struct libmnt_context *cxt)
 		type = mnt_fs_get_fstype(cxt->fs);
 
 		args[i++] = cxt->helper;		/* 1 */
+		args[i++] = mnt_fs_get_srcpath(cxt->fs);/* 2 */
+		args[i++] = mnt_fs_get_target(cxt->fs);	/* 3 */
 
 		if (mnt_context_is_sloppy(cxt))
-			args[i++] = "-s";		/* 2 */
+			args[i++] = "-s";		/* 4 */
 		if (mnt_context_is_fake(cxt))
-			args[i++] = "-f";		/* 3 */
+			args[i++] = "-f";		/* 5 */
 		if (mnt_context_is_nomtab(cxt))
-			args[i++] = "-n";		/* 4 */
+			args[i++] = "-n";		/* 6 */
 		if (mnt_context_is_verbose(cxt))
-			args[i++] = "-v";		/* 5 */
+			args[i++] = "-v";		/* 7 */
 		if (o) {
-			args[i++] = "-o";		/* 6 */
-			args[i++] = o;			/* 7 */
+			args[i++] = "-o";		/* 8 */
+			args[i++] = o;			/* 9 */
 		}
 		if (type
 		    && strchr(type, '.')
 		    && !endswith(cxt->helper, type)) {
-			args[i++] = "-t";		/* 8 */
-			args[i++] = type;		/* 9 */
+			args[i++] = "-t";		/* 10 */
+			args[i++] = type;		/* 11 */
 		}
 		if (namespace) {
-			args[i++] = "-N";		/* 10 */
-			args[i++] = namespace;		/* 11 */
+			args[i++] = "-N";		/* 11 */
+			args[i++] = namespace;		/* 12 */
 		}
-
-		args[i++] = mnt_fs_get_srcpath(cxt->fs);/* 12 */
-		args[i++] = mnt_fs_get_target(cxt->fs);	/* 13 */
-
-		args[i] = NULL;				/* 14 */
+		args[i] = NULL;				/* 13 */
 		for (i = 0; args[i]; i++)
 			DBG(CXT, ul_debugobj(cxt, "argv[%d] = \"%s\"",
 							i, args[i]));
 		DBG_FLUSH;
 		execv(cxt->helper, (char * const *) args);
-		_exit(MNT_EX_EXEC);
+		_exit(EXIT_FAILURE);
 	}
 	default:
 	{
@@ -471,20 +495,14 @@ static int exec_helper(struct libmnt_context *cxt)
 		if (waitpid(pid, &st, 0) == (pid_t) -1) {
 			cxt->helper_status = -1;
 			rc = -errno;
-			DBG(CXT, ul_debugobj(cxt, "waitpid failed [errno=%d]", -rc));
 		} else {
 			cxt->helper_status = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 			cxt->helper_exec_status = rc = 0;
-
-			if (cxt->helper_status == MNT_EX_EXEC) {
-				rc = -MNT_ERR_EXEC;
-				DBG(CXT, ul_debugobj(cxt, "%s exec failed", cxt->helper));
-			}
-
-			DBG(CXT, ul_debugobj(cxt, "%s forked [status=%d, rc=%d]",
-				cxt->helper,
-				cxt->helper_status, rc));
 		}
+		DBG(CXT, ul_debugobj(cxt, "%s executed [status=%d, rc=%d%s]",
+				cxt->helper,
+				cxt->helper_status, rc,
+				rc ? " waitpid failed" : ""));
 		break;
 	}
 
@@ -515,8 +533,6 @@ static int do_mount(struct libmnt_context *cxt, const char *try_type)
 	assert(cxt);
 	assert(cxt->fs);
 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
-
-	mnt_context_reset_status(cxt);
 
 	if (try_type) {
 		rc = mnt_context_prepare_helper(cxt, "mount", try_type);
@@ -549,15 +565,9 @@ static int do_mount(struct libmnt_context *cxt, const char *try_type)
 	if (!rc)
 		rc = mnt_context_call_hooks(cxt, MNT_STAGE_MOUNT);
 
-	if (rc == 0 && mnt_context_is_fake(cxt)) {
-		DBG(CXT, ul_debugobj(cxt, "FAKE (-f) set status=0"));
-		cxt->syscall_status = 0;
-	}
-
-	if (org_type && rc != 0) {
+	if (org_type && rc != 0)
 		__mnt_fs_set_fstype_ptr(cxt->fs, org_type);
-		org_type  = NULL;
-	}
+	org_type  = NULL;
 
 	if (rc == 0 && try_type && cxt->update) {
 		struct libmnt_fs *fs = mnt_update_get_fs(cxt->update);
@@ -581,15 +591,6 @@ static int is_success_status(struct libmnt_context *cxt)
 		return mnt_context_get_status(cxt) == 1;
 
 	return 0;
-}
-
-static int is_termination_status(struct libmnt_context *cxt)
-{
-	if (is_success_status(cxt))
-		return 1;
-
-	return mnt_context_get_syscall_errno(cxt) != EINVAL &&
-	       mnt_context_get_syscall_errno(cxt) != ENODEV;
 }
 
 /* try mount(2) for all items in comma separated list of the filesystem @types */
@@ -632,7 +633,7 @@ static int do_mount_by_types(struct libmnt_context *cxt, const char *types)
 			rc = do_mount(cxt, p);
 		p = end ? end + 1 : NULL;
 		free(autotype);
-	} while (!is_termination_status(cxt) && p);
+	} while (!is_success_status(cxt) && p);
 
 	free(p0);
 	return rc;
@@ -677,7 +678,10 @@ static int do_mount_by_pattern(struct libmnt_context *cxt, const char *pattern)
 	for (fp = filesystems; *fp; fp++) {
 		DBG(CXT, ul_debugobj(cxt, " ##### trying '%s'", *fp));
 		rc = do_mount(cxt, *fp);
-		if (is_termination_status(cxt))
+		if (is_success_status(cxt))
+			break;
+		if (mnt_context_get_syscall_errno(cxt) != EINVAL &&
+		    mnt_context_get_syscall_errno(cxt) != ENODEV)
 			break;
 	}
 	mnt_free_filesystems(filesystems);
@@ -728,7 +732,7 @@ static int prepare_target(struct libmnt_context *cxt)
 		return -MNT_ERR_NAMESPACE;
 
 	/* canonicalize the path */
-	if (rc == 0 && !mnt_context_is_xnocanonicalize(cxt, "target")) {
+	if (rc == 0) {
 		struct libmnt_cache *cache = mnt_context_get_cache(cxt);
 
 		if (cache) {
@@ -962,24 +966,6 @@ int mnt_context_finalize_mount(struct libmnt_context *cxt)
 	return rc;
 }
 
-static int is_erofs_regfile(struct libmnt_context *cxt)
-{
-	const char *type = mnt_fs_get_fstype(cxt->fs);
-	const char *src = mnt_fs_get_srcpath(cxt->fs);
-	unsigned long flags = 0;
-	struct stat st;
-
-	if (!type || strcmp(type, "erofs") != 0)
-		return 0;
-	if (mnt_context_get_user_mflags(cxt, &flags))
-		return 0;
-	if (flags & (MNT_MS_LOOP | MNT_MS_OFFSET | MNT_MS_SIZELIMIT))
-		return 0;	/* it's already loopdev */
-	if (!src || stat(src, &st) != 0 || !S_ISREG(st.st_mode))
-		return 0;
-	return 1;
-}
-
 /**
  * mnt_context_mount:
  * @cxt: mount context
@@ -1084,23 +1070,6 @@ again:
 		}
 	}
 
-	/*
-	 * Try mount EROFS image again with loop device.
-	 * See hook_loopdev.c:is_loopdev_required() for more details.
-	 */
-	if (rc && mnt_context_get_syscall_errno(cxt) == ENOTBLK
-	       && is_erofs_regfile(cxt)) {
-		struct libmnt_optlist *ol = mnt_context_get_optlist(cxt);
-
-		mnt_context_reset_status(cxt);
-		DBG(CXT, ul_debugobj(cxt, "enabling loop= for EROFS"));
-		mnt_optlist_append_flags(ol, MNT_MS_LOOP, cxt->map_userspace);
-
-		rc = mnt_context_call_hooks(cxt, MNT_STAGE_PREP_SOURCE);
-		if (!rc)
-			goto again;
-	}
-
 	if (rc == 0)
 		rc = mnt_context_call_hooks(cxt, MNT_STAGE_POST);
 
@@ -1162,7 +1131,7 @@ int mnt_context_next_mount(struct libmnt_context *cxt,
 	if (!cxt || !fs || !itr)
 		return -EINVAL;
 
-	/* ignore --onlyonce, it's default behavior for --all */
+	/* ingore --onlyonce, it's default behavior for --all */
 	mnt_context_enable_onlyonce(cxt, 0);
 
 	rc = mnt_context_get_fstab(cxt, &fstab);
@@ -1463,16 +1432,8 @@ int mnt_context_get_mount_excode(
 		/*
 		 * /sbin/mount.<type> called, return status
 		 */
-		if (buf) {
-			switch (rc) {
-			case -MNT_ERR_APPLYFLAGS:
-				snprintf(buf, bufsz, _("WARNING: failed to apply propagation flags"));
-				break;
-			case -MNT_ERR_EXEC:
-				snprintf(buf, bufsz, _("failed to execute %s"), cxt->helper);
-				break;
-			}
-		}
+		if (rc == -MNT_ERR_APPLYFLAGS && buf)
+			snprintf(buf, bufsz, _("WARNING: failed to apply propagation flags"));
 
 		return mnt_context_get_helper_status(cxt);
 	}
@@ -1490,11 +1451,6 @@ int mnt_context_get_mount_excode(
 	mnt_context_get_user_mflags(cxt, &uflags);	/* userspace flags */
 
 	if (!mnt_context_syscall_called(cxt)) {
-		if (buf && cxt->errmsg) {
-			xstrncpy(buf, cxt->errmsg, bufsz);
-			return MNT_EX_USAGE;
-		}
-
 		/*
 		 * libmount errors (extra library checks)
 		 */
@@ -1528,7 +1484,7 @@ int mnt_context_get_mount_excode(
 			if (buf)
 				snprintf(buf, bufsz, restricted ?
 						_("failed to determine filesystem type") :
-						_("no valid filesystem type specified"));
+						_("no filesystem type specified"));
 			return MNT_EX_USAGE;
 		case -MNT_ERR_NOSOURCE:
 			if (uflags & MNT_MS_NOFAIL)
@@ -1585,12 +1541,6 @@ int mnt_context_get_mount_excode(
 		 * mount(2) syscall success, but something else failed
 		 * (probably error in utab processing).
 		 */
-		if (rc == -MNT_ERR_APPLYFLAGS) {
-			if (buf)
-				snprintf(buf, bufsz, _("filesystem was mounted, but failed to apply flags"));
-			return MNT_EX_USAGE;
-		}
-
 		if (rc == -MNT_ERR_LOCK) {
 			if (buf)
 				snprintf(buf, bufsz, _("filesystem was mounted, but failed to update userspace mount table"));
@@ -1634,28 +1584,16 @@ int mnt_context_get_mount_excode(
 	 */
 	syserr = mnt_context_get_syscall_errno(cxt);
 
-	if (buf && cxt->errmsg) {
-		if (cxt->syscall_name)
-			snprintf(buf, bufsz, _("%s system call failed: %s"),
-					cxt->syscall_name, cxt->errmsg);
-		else
-			xstrncpy(buf, cxt->errmsg, bufsz);
-
-		return MNT_EX_FAIL;
-	}
 
 	switch(syserr) {
 	case EPERM:
 		if (!buf)
 			break;
 		if (geteuid() == 0) {
-
-			if (mnt_safe_stat(tgt, &st) == 0
-			    && ((mflags & MS_BIND && S_ISREG(st.st_mode))
-				|| S_ISDIR(st.st_mode)))
-				snprintf(buf, bufsz, _("permission denied"));
-			else
+			if (mnt_stat_mountpoint(tgt, &st) || !S_ISDIR(st.st_mode))
 				snprintf(buf, bufsz, _("mount point is not a directory"));
+			else
+				snprintf(buf, bufsz, _("permission denied"));
 		} else
 			snprintf(buf, bufsz, _("must be superuser to use mount"));
 		break;
@@ -1678,33 +1616,37 @@ int mnt_context_get_mount_excode(
 			snprintf(buf, bufsz, _("%s already mounted or mount point busy"), src);
 		break;
 	case ENOENT:
-		if (tgt && mnt_safe_lstat(tgt, &st)) {
+		if (tgt && mnt_lstat_mountpoint(tgt, &st)) {
 			if (buf)
 				snprintf(buf, bufsz, _("mount point does not exist"));
-		} else if (tgt && mnt_safe_stat(tgt, &st)) {
+		} else if (tgt && mnt_stat_mountpoint(tgt, &st)) {
 			if (buf)
 				snprintf(buf, bufsz, _("mount point is a symbolic link to nowhere"));
-		} else if (src && !mnt_is_path(src)) {
+		} else if (src && stat(src, &st)) {
 			if (uflags & MNT_MS_NOFAIL)
 				return MNT_EX_SUCCESS;
 			if (buf)
 				snprintf(buf, bufsz, _("special device %s does not exist"), src);
-		} else
-			goto generic_error;
+		} else if (buf) {
+			errno = syserr;
+			snprintf(buf, bufsz, _("mount(2) system call failed: %m"));
+		}
 		break;
 
 	case ENOTDIR:
-		if (mnt_safe_stat(tgt, &st) || ! S_ISDIR(st.st_mode)) {
+		if (mnt_stat_mountpoint(tgt, &st) || ! S_ISDIR(st.st_mode)) {
 			if (buf)
 				snprintf(buf, bufsz, _("mount point is not a directory"));
-		} else if (src && !mnt_is_path(src)) {
+		} else if (src && stat(src, &st) && errno == ENOTDIR) {
 			if (uflags & MNT_MS_NOFAIL)
 				return MNT_EX_SUCCESS;
 			if (buf)
 				snprintf(buf, bufsz, _("special device %s does not exist "
 					 "(a path prefix is not a directory)"), src);
-		} else
-			goto generic_error;
+		} else if (buf) {
+			errno = syserr;
+			snprintf(buf, bufsz, _("mount(2) system call failed: %m"));
+		}
 		break;
 
 	case EINVAL:
@@ -1754,7 +1696,7 @@ int mnt_context_get_mount_excode(
 			return MNT_EX_SUCCESS;
 		if (!buf)
 			break;
-		if (src && mnt_safe_stat(src, &st))
+		if (src && stat(src, &st))
 			snprintf(buf, bufsz, _("%s is not a block device, and stat(2) fails?"), src);
 		else if (src && S_ISBLK(st.st_mode))
 			snprintf(buf, bufsz,
@@ -1785,8 +1727,10 @@ int mnt_context_get_mount_excode(
 			snprintf(buf, bufsz, _("cannot remount %s read-write, is write-protected"), src);
 		else if (mflags & MS_BIND)
 			snprintf(buf, bufsz, _("bind %s failed"), src);
-		else
-			goto generic_error;
+		else {
+			errno = syserr;
+			snprintf(buf, bufsz, _("mount(2) system call failed: %m"));
+		}
 		break;
 
 	case ENOMEDIUM:
@@ -1798,7 +1742,7 @@ int mnt_context_get_mount_excode(
 
 	case EBADMSG:
 		/* Bad CRC for classic filesystems (e.g. extN or XFS) */
-		if (buf && src && mnt_safe_stat(src, &st) == 0
+		if (buf && src && stat(src, &st) == 0
 		    && (S_ISBLK(st.st_mode) || S_ISREG(st.st_mode))) {
 			snprintf(buf, bufsz, _("cannot mount; probably corrupted filesystem on %s"), src);
 			break;
@@ -1806,11 +1750,9 @@ int mnt_context_get_mount_excode(
 		/* fallthrough */
 
 	default:
-	generic_error:
 		if (buf) {
 			errno = syserr;
-			snprintf(buf, bufsz, _("%s system call failed: %m"),
-					cxt->syscall_name ? : "mount");
+			snprintf(buf, bufsz, _("mount(2) system call failed: %m"));
 		}
 		break;
 	}
@@ -1820,8 +1762,7 @@ int mnt_context_get_mount_excode(
 
 #ifdef TEST_PROGRAM
 
-static int test_perms(struct libmnt_test *ts __attribute__((unused)),
-		      int argc, char *argv[])
+static int test_perms(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_context *cxt;
 	struct libmnt_optlist *ls;
@@ -1864,8 +1805,7 @@ static int test_perms(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_fixopts(struct libmnt_test *ts __attribute__((unused)),
-			int argc, char *argv[])
+static int test_fixopts(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct libmnt_context *cxt;
 	struct libmnt_optlist *ls;

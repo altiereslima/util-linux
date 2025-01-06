@@ -2,7 +2,7 @@
  * No copyright is claimed.  This code is in the public domain; do with
  * it what you wish.
  *
- * Copyright (C) 2021 Karel Zak <kzak@redhat.com>
+ * Written by Karel Zak <kzak@redhat.com>
  */
 #include <ctype.h>
 #include <unistd.h>
@@ -167,11 +167,6 @@ ssize_t procfs_process_get_cmdname(struct path_cxt *pc, char *buf, size_t bufsz)
 ssize_t procfs_process_get_stat(struct path_cxt *pc, char *buf, size_t bufsz)
 {
 	return procfs_process_get_data_for(pc, buf, bufsz, "stat");
-}
-
-ssize_t procfs_process_get_syscall(struct path_cxt *pc, char *buf, size_t bufsz)
-{
-	return procfs_process_get_data_for(pc, buf, bufsz, "syscall");
 }
 
 int procfs_process_get_stat_nth(struct path_cxt *pc, int n, uintmax_t *re)
@@ -374,7 +369,7 @@ int procfs_dirent_get_name(DIR *procfs, struct dirent *d, char *buf, size_t bufs
 		end++;
 
 	sz = end - p;
-	if (sz >= bufsz)
+	if (sz > bufsz)
 		sz = bufsz - 1;
 
 	memcpy(buf, p, sz);

@@ -1,6 +1,3 @@
-/*
- * SPDX-License-Identifier: BSD-3-Clause
- */
 #ifndef UTIL_LINUX_RANDUTILS
 #define UTIL_LINUX_RANDUTILS
 

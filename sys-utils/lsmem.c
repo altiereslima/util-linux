@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
  * lsmem - Show memory configuration
  *
  * Copyright IBM Corp. 2016
@@ -10,6 +8,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <c.h>
 #include <nls.h>
@@ -18,7 +25,6 @@
 #include <closestream.h>
 #include <xalloc.h>
 #include <getopt.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -54,7 +60,7 @@ struct memory_block {
 	int		node;
 	int		nr_zones;
 	int		zones[MAX_NR_ZONES];
-	bool		removable;
+	unsigned int	removable:1;
 };
 
 struct lsmem {
@@ -96,7 +102,7 @@ enum {
 	COL_ZONES,
 };
 
-static const char *const zone_names[] = {
+static char *zone_names[] = {
 	[ZONE_DMA]	= "DMA",
 	[ZONE_DMA32]	= "DMA32",
 	[ZONE_NORMAL]	= "Normal",
@@ -471,7 +477,7 @@ static void read_info(struct lsmem *lsmem)
 			continue;
 		}
 		lsmem->nblocks++;
-		lsmem->blocks = xreallocarray(lsmem->blocks, lsmem->nblocks, sizeof(blk));
+		lsmem->blocks = xrealloc(lsmem->blocks, lsmem->nblocks * sizeof(blk));
 		*&lsmem->blocks[lsmem->nblocks - 1] = blk;
 	}
 }
@@ -486,7 +492,6 @@ static int memory_block_filter(const struct dirent *de)
 static void read_basic_info(struct lsmem *lsmem)
 {
 	char dir[PATH_MAX];
-	int i = 0;
 
 	if (ul_path_access(lsmem->sysmem, F_OK, "block_size_bytes") != 0)
 		errx(EXIT_FAILURE, _("This system does not support memory blocks"));
@@ -497,12 +502,8 @@ static void read_basic_info(struct lsmem *lsmem)
 	if (lsmem->ndirs <= 0)
 		err(EXIT_FAILURE, _("Failed to read %s"), dir);
 
-	for (i = 0; i < lsmem->ndirs; i++) {
-		if (memory_block_get_node(lsmem, lsmem->dirs[i]->d_name) != -1)	{
-			lsmem->have_nodes = 1;
-			break;
-		}
-	}
+	if (memory_block_get_node(lsmem, lsmem->dirs[0]->d_name) != -1)
+		lsmem->have_nodes = 1;
 
 	/* The valid_zones sysmem attribute was introduced with kernel 3.18 */
 	if (ul_path_access(lsmem->sysmem, F_OK, "memory0/valid_zones") == 0)
@@ -534,13 +535,13 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_("     --summary[=when] print summary information (never,always or only)\n"), out);
 
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(22));
+	printf(USAGE_HELP_OPTIONS(22));
 
 	fputs(USAGE_COLUMNS, out);
 	for (i = 0; i < ARRAY_SIZE(coldescs); i++)
 		fprintf(out, " %10s  %s\n", coldescs[i].name, _(coldescs[i].help));
 
-	fprintf(out, USAGE_MAN_TAIL("lsmem(1)"));
+	printf(USAGE_MAN_TAIL("lsmem(1)"));
 
 	exit(EXIT_SUCCESS);
 }

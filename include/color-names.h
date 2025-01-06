@@ -1,8 +1,8 @@
 /*
- * No copyright is claimed.  This code is in the public domain; do with
- * it what you wish.
- *
  * Copyright (C) 2012-2015 Karel Zak <kzak@redhat.com>
+ *
+ * This file may be distributed under the terms of the
+ * GNU Lesser General Public License.
  */
 #ifndef UTIL_LINUX_COLOR_NAMES_H
 #define UTIL_LINUX_COLOR_NAMES_H
@@ -40,8 +40,5 @@
 #define UL_COLORNAME_MAXSZ	32
 
 extern const char *color_sequence_from_colorname(const char *str);
-
-extern int color_is_sequence(const char *color);
-extern char *color_get_sequence(const char *color);
 
 #endif /* UTIL_LINUX_COLOR_NAMES_H */

@@ -1,11 +1,7 @@
-/*
- * No copyright is claimed.  This code is in the public domain; do with
- * it what you wish.
- */
 #ifndef UTIL_LINUX_MOUNT_API_UTILS
 #define UTIL_LINUX_MOUNT_API_UTILS
 
-#if defined(HAVE_MOUNTFD_API) && defined(HAVE_LINUX_MOUNT_H)
+#ifdef HAVE_MOUNTFD_API
 
 #include <sys/syscall.h>
 #include <linux/mount.h>
@@ -54,10 +50,6 @@ static inline int open_tree(int dfd, const char *filename, unsigned int flags)
 # define MOVE_MOUNT_T_EMPTY_PATH 0x00000040 /* Empty to path permitted */
 #endif
 
-#ifndef MOVE_MOUNT_SET_GROUP
-# define MOVE_MOUNT_SET_GROUP	0x00000100 /* Set sharing group instead */
-#endif
-
 #ifndef MOVE_MOUNT__MASK
 # define MOVE_MOUNT__MASK 0x00000077
 #endif
@@ -77,10 +69,6 @@ static inline int move_mount(int from_dfd, const char *from_pathname, int to_dfd
 
 #ifndef MOUNT_ATTR_NOSUID
 # define MOUNT_ATTR_NOSUID 0x00000002
-#endif
-
-#ifndef MOUNT_ATTR_NODEV
-# define MOUNT_ATTR_NODEV 0x00000004
 #endif
 
 #ifndef MOUNT_ATTR_NOEXEC
@@ -116,7 +104,6 @@ static inline int move_mount(int from_dfd, const char *from_pathname, int to_dfd
 #endif
 
 #ifndef HAVE_STRUCT_MOUNT_ATTR
-# ifndef MOUNT_ATTR_SIZE_VER0 /* For case mount.h comes from a place invisible for autotools/meson */
 # include <inttypes.h>
 struct mount_attr {
 	uint64_t attr_set;
@@ -124,7 +111,6 @@ struct mount_attr {
 	uint64_t propagation;
 	uint64_t userns_fd;
 };
-# endif
 #endif
 
 #if !defined(HAVE_MOUNT_SETATTR) && defined(SYS_mount_setattr)
@@ -136,7 +122,6 @@ static inline int mount_setattr(int dfd, const char *path, unsigned int flags,
 #endif
 
 #ifndef HAVE_ENUM_FSCONFIG_COMMAND
-# ifndef FSOPEN_CLOEXEC /* For case mount.h comes from a place invisible for autotools/meson */
 enum fsconfig_command {
 	FSCONFIG_SET_FLAG	= 0,	/* Set parameter, supplying no value */
 	FSCONFIG_SET_STRING	= 1,	/* Set parameter, supplying a string value */
@@ -147,7 +132,6 @@ enum fsconfig_command {
 	FSCONFIG_CMD_CREATE	= 6,	/* Invoke superblock creation */
 	FSCONFIG_CMD_RECONFIGURE = 7,	/* Invoke superblock reconfiguration */
 };
-# endif
 #endif
 
 #if !defined(HAVE_FSCONFIG) && defined(SYS_fsconfig)
@@ -203,6 +187,6 @@ static inline int fspick(int dfd, const char *pathname, unsigned int flags)
 }
 #endif
 
-#endif /* HAVE_MOUNTFD_API && HAVE_LINUX_MOUNT_H */
+#endif /* HAVE_MOUNTFD_API */
 #endif /* UTIL_LINUX_MOUNT_API_UTILS */
 

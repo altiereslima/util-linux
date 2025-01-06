@@ -41,7 +41,6 @@
  *	modified to work correctly in multi-byte locales
  */
 
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -50,7 +49,6 @@
 #include "c.h"
 #include "widechar.h"
 #include "closestream.h"
-#include "fgetwc_or_err.h"
 
 /*
  * colcrt - replaces col for crts with new nroff esp. when using tbl.
@@ -68,13 +66,13 @@
 enum { OUTPUT_COLS = 132 };
 
 struct colcrt_control {
-	FILE	*f;
-	wchar_t	line[OUTPUT_COLS + 1];
-	wchar_t	line_under[OUTPUT_COLS + 1];
- 	bool	print_nl,
-		need_line_under,
-		no_underlining,
-		half_lines;
+	FILE		*f;
+	wchar_t		line[OUTPUT_COLS + 1];
+	wchar_t		line_under[OUTPUT_COLS + 1];
+	unsigned int	print_nl:1,
+			need_line_under:1,
+			no_underlining:1,
+			half_lines:1;
 };
 
 static void __attribute__((__noreturn__)) usage(void)
@@ -91,9 +89,9 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -2, --half-lines        print all half-lines\n"), out);
 
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(25));
+	printf(USAGE_HELP_OPTIONS(25));
 
-	fprintf(out, USAGE_MAN_TAIL("colcrt(1)"));
+	printf(USAGE_MAN_TAIL("colcrt(1)"));
 
 	exit(EXIT_SUCCESS);
 }
@@ -166,7 +164,7 @@ static void colcrt(struct colcrt_control *ctl)
 			errno = 0;
 			old_pos = ftell(ctl->f);
 
-			while (fgetwc_or_err(ctl->f) != L'\n') {
+			while (getwc(ctl->f) != L'\n') {
 				long new_pos;
 
 				if (ferror(ctl->f) || feof(ctl->f))
@@ -181,10 +179,10 @@ static void colcrt(struct colcrt_control *ctl)
 			col = -1;
 			continue;
 		}
-		c = fgetwc_or_err(ctl->f);
+		c = getwc(ctl->f);
 		switch (c) {
 		case 033:	/* ESC */
-			c = fgetwc_or_err(ctl->f);
+			c = getwc(ctl->f);
 			if (c == L'8') {
 				col = rubchars(ctl, col, 1);
 				continue;

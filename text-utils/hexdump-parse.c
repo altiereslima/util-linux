@@ -204,12 +204,10 @@ int block_size(struct hexdump_fs *fs)
 			 * skip any special chars -- save precision in
 			 * case it's a %s format.
 			 */
-			while (strchr(spec + 1, *++fmt) && *fmt != '\0')
+			while (strchr(spec + 1, *++fmt))
 				;
 			if (*fmt == '.' && isdigit(*++fmt))
 				fmt = next_number(fmt, &prec);
-			if (*fmt == '\0')
-				badfmt(fu->fmt);
 			if (first_letter(fmt, "diouxX"))
 				bcnt += 4;
 			else if (first_letter(fmt, "efgEG"))
@@ -427,7 +425,9 @@ isint:				cs[3] = '\0';
 			 */
 			savech = *p2;
 			p1[0] = '\0';
-			xasprintf(&pr->fmt, "%s%s", fmtp, cs);
+			pr->fmt = xmalloc(strlen(fmtp) + strlen(cs) + 1);
+			strcpy(pr->fmt, fmtp);
+			strcat(pr->fmt, cs);
 			*p2 = savech;
 			pr->cchar = pr->fmt + (p1 - fmtp);
 			fmtp = p2;

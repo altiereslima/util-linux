@@ -61,6 +61,12 @@ static int hook_propagation(struct libmnt_context *cxt,
 				hd->flags,
 				hd->flags & MS_REC ? " (recursive)" : ""));
 
+	if (mnt_context_is_fake(cxt)) {
+		DBG(CXT, ul_debugobj(cxt, "  FAKE (-f)"));
+		cxt->syscall_status = 0;
+		return 0;
+	}
+
 	/*
 	 * hd->flags are propagation flags as set in prepare_propagation()
 	 *
@@ -76,8 +82,10 @@ static int hook_propagation(struct libmnt_context *cxt,
 
 	if (rc) {
 		/* Update global syscall status if only this function called */
-		if (mnt_context_propagation_only(cxt))
-			mnt_context_syscall_save_status(cxt, "mount", rc == 0);
+		if (mnt_context_propagation_only(cxt)) {
+			cxt->syscall_status = -errno;
+			cxt->syscall_name = "mount";
+		}
 
 		DBG(HOOK, ul_debugobj(hs, "  mount(2) failed [errno=%d %m]", errno));
 		rc = -MNT_ERR_APPLYFLAGS;
@@ -148,6 +156,12 @@ static int hook_bindremount(struct libmnt_context *cxt,
 				hd->flags,
 				hd->flags & MS_REC ? " (recursive)" : ""));
 
+	if (mnt_context_is_fake(cxt)) {
+		DBG(CXT, ul_debugobj(cxt, "  FAKE (-f)"));
+		cxt->syscall_status = 0;
+		return 0;
+	}
+
 	if (mnt_optlist_is_silent(cxt->optlist))
 		extra |= MS_SILENT;
 
@@ -180,9 +194,8 @@ static int prepare_bindremount(struct libmnt_context *cxt,
 		return -ENOMEM;
 
 	mnt_context_get_mflags(cxt, &data->flags);
-
-	assert(data->flags & MS_BIND);
-	assert(!(data->flags & MS_REMOUNT));
+	assert(cxt->flags & MS_BIND);
+	assert(!(cxt->flags & MS_REMOUNT));
 
 	data->flags |= (MS_REMOUNT | MS_BIND);
 
@@ -237,8 +250,17 @@ static int hook_mount(struct libmnt_context *cxt,
 		options ? (cxt->flags & MNT_FL_MOUNTDATA) ? "binary" :
 			  options : "<none>"));
 
+	if (mnt_context_is_fake(cxt)) {
+		DBG(HOOK, ul_debugobj(hs, " FAKE (-f)"));
+		cxt->syscall_status = 0;
+		return 0;
+	}
+
 	if (mount(src, target, type, flags, options)) {
-		mnt_context_syscall_save_status(cxt, "mount", 0);
+		cxt->syscall_status = -errno;
+		cxt->syscall_name = "mount";
+		DBG(HOOK, ul_debugobj(hs, "  mount(2) failed [errno=%d %m]",
+					-cxt->syscall_status));
 		rc = -cxt->syscall_status;
 		return rc;
 	}
@@ -261,7 +283,7 @@ static int hook_prepare(struct libmnt_context *cxt,
 	assert(hs == &hookset_mount_legacy);
 
 #ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-	/* do nothing when a new __mount successfully registered */
+	/* do nothing when a new __mount succesfully registred */
 	if (mnt_context_has_hook(cxt, &hookset_mount, 0, NULL))
 		return 0;
 #endif

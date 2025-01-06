@@ -154,24 +154,13 @@ static inline int logger_gettimeofday(struct timeval *tv, struct timezone *tz)
 	char *str = getenv("LOGGER_TEST_TIMEOFDAY");
 	uintmax_t sec, usec;
 
-	if (str) {
-		if (sscanf(str, "%ju.%ju", &sec, &usec) != 2)
-			goto err;
-
+	if (str && sscanf(str, "%ju.%ju", &sec, &usec) == 2) {
 		tv->tv_sec = sec;
 		tv->tv_usec = usec;
-
-		if (tv->tv_sec >= 0 && tv->tv_usec >= 0)
-			return 0;
-		else
-			goto err;
+		return tv->tv_sec >= 0 && tv->tv_usec >= 0 ? 0 : -EINVAL;
 	}
 
 	return gettimeofday(tv, tz);
-
-err:
-	errno = EINVAL;
-	return -1;
 }
 
 static inline char *logger_xgethostname(void)
@@ -259,7 +248,7 @@ static int unix_socket(struct logger_ctl *ctl, const char *path, int *socket_typ
 		errx(EXIT_FAILURE, _("openlog %s: pathname too long"), path);
 
 	s_addr.sun_family = AF_UNIX;
-	xstrncpy(s_addr.sun_path, path, sizeof(s_addr.sun_path));
+	strcpy(s_addr.sun_path, path);
 
 	for (i = 2; i; i--) {
 		int st = -1;
@@ -354,7 +343,7 @@ static int journald_entry(struct logger_ctl *ctl, FILE *fp)
 	int n, lines = 0, vectors = 8, ret = 0, msgline = -1;
 	size_t dummy = 0;
 
-	iovec = xreallocarray(NULL, vectors, sizeof(struct iovec));
+	iovec = xmalloc(vectors * sizeof(struct iovec));
 	while (1) {
 		buf = NULL;
 		sz = getline(&buf, &dummy, fp);
@@ -386,7 +375,7 @@ static int journald_entry(struct logger_ctl *ctl, FILE *fp)
 			vectors *= 2;
 			if (IOV_MAX < vectors)
 				errx(EXIT_FAILURE, _("maximum input lines (%d) exceeded"), IOV_MAX);
-			iovec = xreallocarray(iovec, vectors, sizeof(struct iovec));
+			iovec = xrealloc(iovec, vectors * sizeof(struct iovec));
 		}
 		iovec[lines].iov_base = buf;
 		iovec[lines].iov_len = sz;
@@ -417,15 +406,12 @@ static char const *rfc3164_current_time(void)
 	static char time[32];
 	struct timeval tv;
 	struct tm tm;
-	int ret;
 	static char const * const monthnames[] = {
 		"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
 		"Sep", "Oct", "Nov", "Dec"
 	};
 
-	ret = logger_gettimeofday(&tv, NULL);
-	if (ret == -1)
-		err(EXIT_FAILURE, _("gettimeofday() failed"));
+	logger_gettimeofday(&tv, NULL);
 	localtime_r(&tv.tv_sec, &tm);
 	snprintf(time, sizeof(time),"%s %2d %2.2d:%2.2d:%2.2d",
 		monthnames[tm.tm_mon], tm.tm_mday,
@@ -465,7 +451,7 @@ static void write_output(struct logger_ctl *ctl, const char *const msg)
 	if (!ctl->noact && !is_connected(ctl))
 		logger_reopen(ctl);
 
-	/* 1) octet count */
+	/* 1) octen count */
 	if (ctl->octet_count) {
 		size_t len = xasprintf(&octet, "%zu ", strlen(ctl->hdr) + strlen(msg));
 		iovec_add_string(iov, iovlen, octet, len);
@@ -485,7 +471,7 @@ static void write_output(struct logger_ctl *ctl, const char *const msg)
 		union {
 			struct cmsghdr cmh;
 			char   control[CMSG_SPACE(sizeof(struct ucred))];
-		} cbuf = { .control = { 0 } };
+		} cbuf;
 #endif
 
 		/* 4) add extra \n to make sure message is terminated */
@@ -796,7 +782,6 @@ static int valid_structured_data_id(const char *str)
  */
 static void syslog_rfc5424_header(struct logger_ctl *const ctl)
 {
-	int ret;
 	char *time;
 	char *hostname;
 	char const *app_name = ctl->tag;
@@ -809,18 +794,16 @@ static void syslog_rfc5424_header(struct logger_ctl *const ctl)
 		struct timeval tv;
 		struct tm tm;
 
-		ret = logger_gettimeofday(&tv, NULL);
-		if (ret == -1)
-			err(EXIT_FAILURE, _("gettimeofday() failed"));
+		logger_gettimeofday(&tv, NULL);
 		if (localtime_r(&tv.tv_sec, &tm) != NULL) {
 			char fmt[64];
 			const size_t i = strftime(fmt, sizeof(fmt),
-						  "%Y-%m-%dT%H:%M:%S.%%06jd%z ", &tm);
+						  "%Y-%m-%dT%H:%M:%S.%%06u%z ", &tm);
 			/* patch TZ info to comply with RFC3339 (we left SP at end) */
 			fmt[i - 1] = fmt[i - 2];
 			fmt[i - 2] = fmt[i - 3];
 			fmt[i - 3] = ':';
-			xasprintf(&time, fmt, (intmax_t) tv.tv_usec);
+			xasprintf(&time, fmt, tv.tv_usec);
 		} else
 			err(EXIT_FAILURE, _("localtime() failed"));
 	} else
@@ -1108,8 +1091,8 @@ static void __attribute__((__noreturn__)) usage(void)
 #endif
 
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(26));
-	fprintf(out, USAGE_MAN_TAIL("logger(1)"));
+	printf(USAGE_HELP_OPTIONS(26));
+	printf(USAGE_MAN_TAIL("logger(1)"));
 
 	exit(EXIT_SUCCESS);
 }

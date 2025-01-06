@@ -5,7 +5,7 @@ _fadvise_module()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     case $prev in
-	'-a'|'--advice')
+	'-a'|'--advise')
 	    ADVS='normal
 		  sequential
 		  random
@@ -25,11 +25,11 @@ _fadvise_module()
     esac
     case $cur in
 	-*)
-	    OPTS='--advice
+	    OPTS='--advise
 		  --length
 		  --offset
 		  --help
-		  --version'
+		  --versione'
 	    COMPREPLY=( $(compgen -W "${OPTS[*]}" -- $cur) )
 	    return 0
 	;;

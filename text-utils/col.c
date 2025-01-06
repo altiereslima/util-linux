@@ -56,7 +56,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,7 +105,7 @@ struct col_char {
 	wchar_t		c_char;		/* character in question */
 	int		c_width;	/* character width */
 
-  	uint8_t		c_set;		/* character set (currently only 2) */
+	uint8_t		c_set:1;	/* character set (currently only 2) */
 };
 
 struct col_line {
@@ -117,7 +116,7 @@ struct col_line {
 	size_t		l_line_len;	/* strlen(l_line) */
 	size_t		l_max_col;	/* max column in the line */
 
-	bool		l_needs_sort;	/* set if chars went in out of order */
+	uint8_t		l_needs_sort:1;	/* set if chars went in out of order */
 };
 
 #ifdef COL_DEALLOCATE_ON_EXIT
@@ -140,11 +139,12 @@ struct col_ctl {
 	struct col_alloc *alloc_root;	/* first of line allocations */
 	struct col_alloc *alloc_head;	/* latest line allocation */
 #endif
-	bool	last_set,		/* char_set of last char printed */
-		compress_spaces,	/* if doing space -> tab conversion */
-		fine,			/* if `fine' resolution (half lines) */
-		no_backspaces,		/* if not to output any backspaces */
-		pass_unknown_seqs;	/* whether to pass unknown control sequences */
+	unsigned int
+		last_set:1,		/* char_set of last char printed */
+		compress_spaces:1,	/* if doing space -> tab conversion */
+		fine:1,			/* if `fine' resolution (half lines) */
+		no_backspaces:1,	/* if not to output any backspaces */
+		pass_unknown_seqs:1;	/* whether to pass unknown control sequences */
 };
 
 struct col_lines {
@@ -158,8 +158,9 @@ struct col_lines {
 	size_t nflushd_lines;
 	size_t this_line;
 
-	bool	cur_set,
-		warned;
+	unsigned int
+		cur_set:1,
+		warned:1;
 };
 
 static void __attribute__((__noreturn__)) usage(void)
@@ -181,10 +182,10 @@ static void __attribute__((__noreturn__)) usage(void)
 		" -x, --spaces           convert tabs to spaces\n"
 		" -l, --lines NUM        buffer at least NUM lines\n"
 		));
-	fprintf(out, " -H, --help             %s\n", USAGE_OPTSTR_HELP);
-	fprintf(out, " -V, --version          %s\n", USAGE_OPTSTR_VERSION);
+	printf( " -H, --help             %s\n", USAGE_OPTSTR_HELP);
+	printf( " -v, --version          %s\n", USAGE_OPTSTR_VERSION);
 
-	fprintf(out, USAGE_MAN_TAIL("col(1)"));
+	printf(USAGE_MAN_TAIL("col(1)"));
 	exit(EXIT_SUCCESS);
 }
 
@@ -243,11 +244,11 @@ static void flush_line(struct col_ctl *ctl, struct col_line *l)
 		 */
 		if (sorted_size < l->l_lsize) {
 			sorted_size = l->l_lsize;
-			sorted = xreallocarray(sorted, sorted_size, sizeof(struct col_char));
+			sorted = xrealloc(sorted, sizeof(struct col_char) * sorted_size);
 		}
 		if (count_size <= l->l_max_col) {
 			count_size = l->l_max_col + 1;
-			count = xreallocarray(count, count_size, sizeof(size_t));
+			count = xrealloc(count, sizeof(size_t) * count_size);
 		}
 		memset(count, 0, sizeof(size_t) * l->l_max_col + 1);
 		for (i = nchars, c = l->l_line; c && 0 < i; i--, c++)

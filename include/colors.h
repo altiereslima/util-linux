@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: LGPL-2.1-or-later
- *
  * Copyright (C) 2012 Ondrej Oprala <ooprala@redhat.com>
  * Copyright (C) 2012-2014 Karel Zak <kzak@redhat.com>
  *
@@ -71,7 +69,5 @@ static inline void color_disable(void)
 {
 	color_fdisable(stdout);
 }
-
-const char *color_get_disable_sequence(void);
 
 #endif /* UTIL_LINUX_COLORS_H */

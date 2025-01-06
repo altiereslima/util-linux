@@ -346,7 +346,7 @@ int fdisk_list_disklabel(struct fdisk_context *cxt)
  */
 int fdisk_create_disklabel(struct fdisk_context *cxt, const char *name)
 {
-	int haslabel = 0, rc;
+	int haslabel = 0;
 	struct fdisk_label *lb;
 
 	if (!cxt)
@@ -375,19 +375,13 @@ int fdisk_create_disklabel(struct fdisk_context *cxt, const char *name)
 	if (!lb->op->create)
 		return -ENOSYS;
 
-	rc = __fdisk_switch_label(cxt, lb);
-	if (rc)
-		return rc;
-
+	__fdisk_switch_label(cxt, lb);
 	assert(cxt->label == lb);
 
-	if (haslabel && !cxt->parent) {
-		rc = fdisk_reset_device_properties(cxt);
-		if (rc)
-			return rc;
-	}
+	if (haslabel && !cxt->parent)
+		fdisk_reset_device_properties(cxt);
 
-	DBG(CXT, ul_debugobj(cxt, "creating a new %s label", lb->name));
+	DBG(CXT, ul_debugobj(cxt, "create a new %s label", lb->name));
 	return lb->op->create(cxt);
 }
 

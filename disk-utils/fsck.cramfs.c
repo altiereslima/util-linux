@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
  * cramfsck - check a cramfs file system
  *
  * Copyright (C) 2000-2002 Transmeta Corporation
@@ -128,9 +126,9 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -b, --blocksize <size>   use this blocksize, defaults to page size\n"), out);
 	fputs(_("     --extract[=<dir>]    test uncompression, optionally extract into <dir>\n"), out);
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(26));
+	printf(USAGE_HELP_OPTIONS(26));
 
-	fprintf(out, USAGE_MAN_TAIL("fsck.cramfs(8)"));
+	printf(USAGE_MAN_TAIL("fsck.cramfs(8)"));
 	exit(FSCK_EX_OK);
 }
 
@@ -150,10 +148,10 @@ static int get_superblock_endianness(uint32_t magic)
 	return -1;
 }
 
-static void test_super(int *start)
+static void test_super(int *start, size_t * length)
 {
 	struct stat st;
-	unsigned long long length;
+
 
 	fd = open(filename, O_RDONLY);
 	if (fd < 0)
@@ -164,16 +162,18 @@ static void test_super(int *start)
 		err(FSCK_EX_ERROR, _("stat of %s failed"), filename);
 
 	if (S_ISBLK(st.st_mode)) {
-		if (blkdev_get_size(fd, &length))
+		unsigned long long bytes;
+		if (blkdev_get_size(fd, &bytes))
 			err(FSCK_EX_ERROR,
 			    _("ioctl failed: unable to determine device size: %s"),
 			    filename);
+		*length = bytes;
 	} else if (S_ISREG(st.st_mode))
-		length = st.st_size;
+		*length = st.st_size;
 	else
 		errx(FSCK_EX_ERROR, _("not a block device or file: %s"), filename);
 
-	if (length < sizeof(struct cramfs_super))
+	if (*length < sizeof(struct cramfs_super))
 		errx(FSCK_EX_UNCORRECTED, _("file length too short"));
 
 	/* find superblock */
@@ -181,7 +181,7 @@ static void test_super(int *start)
 		err(FSCK_EX_ERROR, _("cannot read %s"), filename);
 	if (get_superblock_endianness(super.magic) != -1)
 		*start = 0;
-	else if (length >= (PAD_SIZE + sizeof(super))) {
+	else if (*length >= (PAD_SIZE + sizeof(super))) {
 		if (lseek(fd, PAD_SIZE, SEEK_SET) == (off_t) -1)
 			err(FSCK_EX_ERROR, _("seek on %s failed"), filename);
 		if (read(fd, &super, sizeof(super)) != sizeof(super))
@@ -209,9 +209,9 @@ static void test_super(int *start)
 	if (super.flags & CRAMFS_FLAG_FSID_VERSION_2) {
 		if (super.fsid.files == 0)
 			errx(FSCK_EX_UNCORRECTED, _("zero file count"));
-		if (length < super.size)
+		if (*length < super.size)
 			errx(FSCK_EX_UNCORRECTED, _("file length too short"));
-		else if (length > super.size)
+		else if (*length > super.size)
 			warnx(_("file extends past end of filesystem"));
 	} else
 		warnx(_("old cramfs format"));
@@ -436,29 +436,12 @@ static void change_file_status(char *path, struct cramfs_inode *i)
 		if (S_ISLNK(i->mode))
 			return;
 		if (((S_ISUID | S_ISGID) & i->mode) && chmod(path, i->mode) < 0)
-			err(FSCK_EX_ERROR, _("chmod failed: %s"), path);
+			err(FSCK_EX_ERROR, _("chown failed: %s"), path);
 	}
 	if (S_ISLNK(i->mode))
 		return;
 	if (utimes(path, epoch) < 0)
 		err(FSCK_EX_ERROR, _("utimes failed: %s"), path);
-}
-
-static int is_dangerous_filename(char *name, int len)
-{
-	return (len == 1 && name[0] == '.') ||
-	       (len == 2 && name[0] == '.' && name[1] == '.');
-}
-
-static void __attribute__((__noreturn__))
-	errx_path(const char *mesg, const char *name, size_t namelen)
-{
-	char buf[PATH_MAX] = { 0 };
-
-	namelen = min(namelen, sizeof(buf) - 1);
-	memcpy(buf, name, namelen);
-
-	errx(FSCK_EX_UNCORRECTED, "%s: %s", mesg, buf);
 }
 
 static void do_directory(char *path, struct cramfs_inode *i)
@@ -490,7 +473,6 @@ static void do_directory(char *path, struct cramfs_inode *i)
 	}
 	while (count > 0) {
 		struct cramfs_inode *child = iget(offset);
-		char *name;
 		int size;
 		int newlen = child->namelen << 2;
 
@@ -498,13 +480,8 @@ static void do_directory(char *path, struct cramfs_inode *i)
 		count -= size;
 
 		offset += sizeof(struct cramfs_inode);
-		name = romfs_read(offset);
 
-		if (memchr(name, '/', newlen) != NULL)
-			errx_path(_("illegal filename"), name, newlen);
-		if (*extract_dir != '\0' && is_dangerous_filename(name, newlen))
-			errx_path(_("dangerous filename"), name, newlen);
-		memcpy(newpath + pathlen, name, newlen);
+		memcpy(newpath + pathlen, romfs_read(offset), newlen);
 		newpath[pathlen + newlen] = 0;
 		if (newlen == 0)
 			errx(FSCK_EX_UNCORRECTED, _("filename length is zero"));
@@ -677,6 +654,7 @@ int main(int argc, char **argv)
 {
 	int c;			/* for getopt */
 	int start = 0;
+	size_t length = 0;
 
 	static const struct option longopts[] = {
 		{"verbose",   no_argument,       NULL, 'v'},
@@ -727,7 +705,7 @@ int main(int argc, char **argv)
 	}
 	filename = argv[optind];
 
-	test_super(&start);
+	test_super(&start, &length);
 	test_crc(start);
 
 	if (opt_extract) {

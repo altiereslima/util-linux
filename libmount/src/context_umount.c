@@ -134,7 +134,7 @@ try_loopdev:
 		 */
 		struct stat st;
 
-		if (mnt_safe_stat(tgt, &st) == 0 && S_ISREG(st.st_mode)) {
+		if (mnt_stat_mountpoint(tgt, &st) == 0 && S_ISREG(st.st_mode)) {
 			int count;
 			struct libmnt_cache *cache = mnt_context_get_cache(cxt);
 			const char *bf = cache ? mnt_resolve_path(tgt, cache) : tgt;
@@ -267,19 +267,15 @@ static int lookup_umount_fs_by_statfs(struct libmnt_context *cxt, const char *tg
 	 * So, let's use statfs() if possible (it's bad idea for --lazy/--force
 	 * umounts as target is probably unreachable NFS, also for --detach-loop
 	 * as this additionally needs to know the name of the loop device).
-	 *
-	 * For the "umount --read-only" command, we need to read the mountinfo
-	 * to obtain the mount source.
 	 */
 	if (mnt_context_is_restricted(cxt)
 	    || *tgt != '/'
-	    || mnt_context_within_helper(cxt)
+	    || (cxt->flags & MNT_FL_HELPER)
 	    || mnt_context_is_force(cxt)
 	    || mnt_context_is_lazy(cxt)
 	    || mnt_context_is_nocanonicalize(cxt)
 	    || mnt_context_is_loopdel(cxt)
-	    || mnt_context_is_rdonly_umount(cxt)
-	    || mnt_safe_stat(tgt, &st) != 0 || !S_ISDIR(st.st_mode)
+	    || mnt_stat_mountpoint(tgt, &st) != 0 || !S_ISDIR(st.st_mode)
 	    || has_utab_entry(cxt, tgt))
 		return 1; /* not found */
 
@@ -347,12 +343,13 @@ static int lookup_umount_fs_by_mountinfo(struct libmnt_context *cxt, const char 
 	return 0;
 }
 
-/*
- * This function searches for the file system according to cxt->fs->target and
- * applies the result to cxt->fs. This function is a umount replacement for
- * mnt_context_apply_fstab(). Use mnt_context_tab_applied() to check the result.
+/* This function searchs for FS according to cxt->fs->target,
+ * apply result to cxt->fs and it's umount replacement to
+ * mnt_context_apply_fstab(), use mnt_context_tab_applied()
+ * to check result.
  *
- * The goal is to minimize situations when we need to parse /proc/self/mountinfo.
+ * The goal is to minimize situations when we need to parse
+ * /proc/self/mountinfo.
  */
 static int lookup_umount_fs(struct libmnt_context *cxt)
 {
@@ -711,29 +708,28 @@ static int exec_helper(struct libmnt_context *cxt)
 		type = mnt_fs_get_fstype(cxt->fs);
 
 		args[i++] = cxt->helper;			/* 1 */
+		args[i++] = mnt_fs_get_target(cxt->fs);		/* 2 */
 
 		if (mnt_context_is_nomtab(cxt))
-			args[i++] = "-n";			/* 2 */
+			args[i++] = "-n";			/* 3 */
 		if (mnt_context_is_lazy(cxt))
-			args[i++] = "-l";			/* 3 */
+			args[i++] = "-l";			/* 4 */
 		if (mnt_context_is_force(cxt))
-			args[i++] = "-f";			/* 4 */
+			args[i++] = "-f";			/* 5 */
 		if (mnt_context_is_verbose(cxt))
-			args[i++] = "-v";			/* 5 */
+			args[i++] = "-v";			/* 6 */
 		if (mnt_context_is_rdonly_umount(cxt))
-			args[i++] = "-r";			/* 6 */
+			args[i++] = "-r";			/* 7 */
 		if (type
 		    && strchr(type, '.')
 		    && !endswith(cxt->helper, type)) {
-			args[i++] = "-t";			/* 7 */
-			args[i++] = type;			/* 8 */
+			args[i++] = "-t";			/* 8 */
+			args[i++] = type;			/* 9 */
 		}
 		if (namespace) {
-			args[i++] = "-N";			/* 9 */
-			args[i++] = namespace;			/* 10 */
+			args[i++] = "-N";			/* 10 */
+			args[i++] = namespace;			/* 11 */
 		}
-
-		args[i++] = mnt_fs_get_target(cxt->fs);		/* 11 */
 
 		args[i] = NULL;					/* 12 */
 		for (i = 0; args[i]; i++)
@@ -741,7 +737,7 @@ static int exec_helper(struct libmnt_context *cxt)
 							i, args[i]));
 		DBG_FLUSH;
 		execv(cxt->helper, (char * const *) args);
-		_exit(MNT_EX_EXEC);
+		_exit(EXIT_FAILURE);
 	}
 	default:
 	{
@@ -750,20 +746,14 @@ static int exec_helper(struct libmnt_context *cxt)
 		if (waitpid(pid, &st, 0) == (pid_t) -1) {
 			cxt->helper_status = -1;
 			rc = -errno;
-			DBG(CXT, ul_debugobj(cxt, "waitpid failed [errno=%d]", -rc));
 		} else {
 			cxt->helper_status = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 			cxt->helper_exec_status = rc = 0;
-
-			if (cxt->helper_status == MNT_EX_EXEC) {
-				rc = -MNT_ERR_EXEC;
-				DBG(CXT, ul_debugobj(cxt, "%s exec failed", cxt->helper));
-			}
-
-			DBG(CXT, ul_debugobj(cxt, "%s forked [status=%d, rc=%d]",
-				cxt->helper,
-				cxt->helper_status, rc));
 		}
+		DBG(CXT, ul_debugobj(cxt, "%s executed [status=%d, rc=%d%s]",
+				cxt->helper,
+				cxt->helper_status, rc,
+				rc ? " waitpid failed" : ""));
 		break;
 	}
 
@@ -888,17 +878,7 @@ static int do_umount(struct libmnt_context *cxt)
 	if (mnt_context_is_fake(cxt))
 		rc = 0;
 	else {
-		struct stat st;
-
 		rc = flags ? umount2(target, flags) : umount(target);
-
-		if (rc < 0
-		    && errno == EINVAL
-		    && !(flags & UMOUNT_NOFOLLOW)
-		    && !mnt_context_is_restricted(cxt)
-		    && mnt_safe_lstat(target, &st) == 0 && S_ISLNK(st.st_mode))
-			rc = umount2(target, flags | UMOUNT_NOFOLLOW);
-
 		if (rc < 0)
 			cxt->syscall_status = -errno;
 		free(tgtbuf);
@@ -1254,15 +1234,11 @@ int mnt_context_get_umount_excode(
 			char *buf,
 			size_t bufsz)
 {
-	if (mnt_context_helper_executed(cxt)) {
+	if (mnt_context_helper_executed(cxt))
 		/*
 		 * /sbin/umount.<type> called, return status
 		 */
-		if (rc == -MNT_ERR_EXEC && buf)
-			snprintf(buf, bufsz, _("failed to execute %s"), cxt->helper);
-
 		return mnt_context_get_helper_status(cxt);
-	}
 
 	if (rc == 0 && mnt_context_get_status(cxt) == 1)
 		/*

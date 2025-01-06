@@ -61,11 +61,6 @@
 #include <sys/types.h>
 #include <grp.h>
 
-#if defined(USE_SYSTEMD) && HAVE_DECL_SD_SESSION_GET_USERNAME == 1
-# include <systemd/sd-login.h>
-# include <systemd/sd-daemon.h>
-#endif
-
 #include "nls.h"
 #include "xalloc.h"
 #include "strutils.h"
@@ -78,7 +73,6 @@
 #include "closestream.h"
 #include "timeutils.h"
 #include "pwdutils.h"
-#include "strv.h"
 
 #define	TERM_WIDTH	79
 #define	WRITE_TIME_OUT	300		/* in seconds */
@@ -102,8 +96,8 @@ static void __attribute__((__noreturn__)) usage(void)
 	fputs(_(" -n, --nobanner          do not print banner, works only for root\n"), out);
 	fputs(_(" -t, --timeout <timeout> write timeout in seconds\n"), out);
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(25));
-	fprintf(out, USAGE_MAN_TAIL("wall(1)"));
+	printf(USAGE_HELP_OPTIONS(25));
+	printf(USAGE_MAN_TAIL("wall(1)"));
 
 	exit(EXIT_SUCCESS);
 }
@@ -137,18 +131,11 @@ static gid_t get_group_gid(const char *group)
 
 static struct group_workspace *init_group_workspace(const char *group)
 {
-	struct group_workspace *buf;
-	long n;
-
-	n = sysconf(_SC_NGROUPS_MAX);
-	if (n < 0 || n > INT_MAX - 1)
-		return NULL;
-
-	buf = xmalloc(sizeof(struct group_workspace));
-	buf->ngroups = n + 1;	/* room for the primary gid */
+	struct group_workspace *buf = xmalloc(sizeof(struct group_workspace));
 
 	buf->requested_group = get_group_gid(group);
-	buf->groups = xcalloc(buf->ngroups, sizeof(*buf->groups));
+	buf->ngroups = sysconf(_SC_NGROUPS_MAX) + 1;  /* room for the primary gid */
+	buf->groups = xcalloc(sizeof(*buf->groups), buf->ngroups);
 
 	return buf;
 }
@@ -191,30 +178,19 @@ static int is_gr_member(const char *login, const struct group_workspace *buf)
 	return 0;
 }
 
-static int has_tty(char **ttys, char *name)
-{
-	char **str;
-
-	STRV_FOREACH(str, ttys) {
-		if (strcmp(*str, name) == 0)
-			return 1;
-	}
-
-	return 0;
-}
-
 int main(int argc, char **argv)
 {
 	int ch;
 	struct iovec iov;
 	struct utmpx *utmpptr;
+	char *p;
 	char line[sizeof(utmpptr->ut_line) + 1];
 	int print_banner = TRUE;
 	struct group_workspace *group_buf = NULL;
 	char *mbuf, *fname = NULL;
 	size_t mbufsize;
 	unsigned timeout = WRITE_TIME_OUT;
-	char **mvec = NULL, **ttys = NULL, **str;
+	char **mvec = NULL;
 	int mvecsz = 0;
 
 	static const struct option longopts[] = {
@@ -270,92 +246,116 @@ int main(int argc, char **argv)
 
 	iov.iov_base = mbuf;
 	iov.iov_len = mbufsize;
-
-#if defined(USE_SYSTEMD) && HAVE_DECL_SD_SESSION_GET_USERNAME == 1
-	if (sd_booted() > 0) {
-		char **sessions_list;
-		int sessions;
-
-		sessions = sd_get_sessions(&sessions_list);
-		if (sessions < 0) {
-			warnx(_("error getting sessions: %s"), strerror(-sessions));
-			goto utmp;
-		}
-
-		for (int i = 0; i < sessions; i++) {
-			char *name, *tty;
-			int r;
-
-			if ((r = sd_session_get_username(sessions_list[i], &name)) < 0) {
-				warnx(_("get user name failed: %s"), strerror (-r));
-				goto utmp;
-			}
-			if (!(group_buf && !is_gr_member(name, group_buf))
-			    && sd_session_get_tty(sessions_list[i], &tty) >= 0
-			    && strv_consume(&ttys, tty) < 0)
-				err(EXIT_FAILURE, _("failed to allocate lines list"));
-
-			free(name);
-			free(sessions_list[i]);
-		}
-		free(sessions_list);
-	}
-utmp:
-#endif
-	{
-		while ((utmpptr = getutxent())) {
-			if (!utmpptr->ut_user[0])
-				continue;
+	while((utmpptr = getutxent())) {
+		if (!utmpptr->ut_user[0])
+			continue;
 #ifdef USER_PROCESS
-			if (utmpptr->ut_type != USER_PROCESS)
-				continue;
+		if (utmpptr->ut_type != USER_PROCESS)
+			continue;
 #endif
-			/* Joey Hess reports that use-sessreg in /etc/X11/wdm/ produces
-			 * ut_line entries like :0, and a write to /dev/:0 fails.
-			 *
-			 * It also seems that some login manager may produce empty ut_line.
-			 */
-			if (!*utmpptr->ut_line || *utmpptr->ut_line == ':')
-				continue;
+		/* Joey Hess reports that use-sessreg in /etc/X11/wdm/ produces
+		 * ut_line entries like :0, and a write to /dev/:0 fails.
+		 *
+		 * It also seems that some login manager may produce empty ut_line.
+		 */
+		if (!*utmpptr->ut_line || *utmpptr->ut_line == ':')
+			continue;
 
-			if (group_buf && !is_gr_member(utmpptr->ut_user, group_buf))
-				continue;
+		if (group_buf && !is_gr_member(utmpptr->ut_user, group_buf))
+			continue;
 
-			mem2strcpy(line, utmpptr->ut_line, sizeof(utmpptr->ut_line), sizeof(line));
-			if (has_tty(ttys, line))
-				continue;
-			if (strv_extend(&ttys, line) < 0)
-				err(EXIT_FAILURE, _("failed to allocate lines list"));
-		}
-		endutxent();
+		mem2strcpy(line, utmpptr->ut_line, sizeof(utmpptr->ut_line), sizeof(line));
+		if ((p = ttymsg(&iov, 1, line, timeout)) != NULL)
+			warnx("%s", p);
 	}
-
-	STRV_FOREACH(str, ttys) {
-		char *er = ttymsg(&iov, 1, *str, timeout);
-		if (er)
-			 warnx("%s", er);
-	}
-
-	strv_free(ttys);
+	endutxent();
 	free(mbuf);
 	free_group_workspace(group_buf);
 	exit(EXIT_SUCCESS);
 }
 
+struct buffer {
+	size_t	sz;
+	size_t	used;
+	char	*data;
+};
+
+static void buf_enlarge(struct buffer *bs, size_t len)
+{
+	if (bs->sz == 0 || len > bs->sz - bs->used) {
+		bs->sz += len < 128 ? 128 : len;
+		bs->data = xrealloc(bs->data, bs->sz);
+	}
+}
+
+static void buf_puts(struct buffer *bs, const char *s)
+{
+	size_t len = strlen(s);
+
+	buf_enlarge(bs, len + 1);
+	memcpy(bs->data + bs->used, s, len + 1);
+	bs->used += len;
+}
+
+static void __attribute__((__format__ (__printf__, 2, 3)))
+	buf_printf(struct buffer *bs, const char *fmt, ...)
+{
+	int rc;
+	va_list ap;
+	size_t limit;
+
+	buf_enlarge(bs, 0);	/* default size */
+	limit = bs->sz - bs->used;
+
+	va_start(ap, fmt);
+	rc = vsnprintf(bs->data + bs->used, limit, fmt, ap);
+	va_end(ap);
+
+	if (rc >= 0 && (size_t) rc >= limit) {	/* not enough, enlarge */
+		buf_enlarge(bs, (size_t)rc + 1);
+		limit = bs->sz - bs->used;
+		va_start(ap, fmt);
+		rc = vsnprintf(bs->data  + bs->used, limit, fmt, ap);
+		va_end(ap);
+	}
+
+	if (rc > 0)
+		bs->used += rc;
+}
+
+static void buf_putc_careful(struct buffer *bs, int c)
+{
+	if (isprint(c) || c == '\a' || c == '\t' || c == '\r' || c == '\n') {
+		buf_enlarge(bs, 1);
+		bs->data[bs->used++] = c;
+	} else if (!c_isascii(c))
+		buf_printf(bs, "\\%3o", (unsigned char)c);
+	else {
+		char tmp[] = { '^', c ^ 0x40, '\0' };
+		buf_puts(bs, tmp);
+	}
+}
+
 static char *makemsg(char *fname, char **mvec, int mvecsz,
 		     size_t *mbufsize, int print_banner)
 {
-	char *lbuf, *retbuf;
-	FILE * fs = open_memstream(&retbuf, mbufsize);
-	size_t lbuflen = 512;
-	lbuf = xmalloc(lbuflen);
+	struct buffer _bs = {.used = 0}, *bs = &_bs;
+	register int ch, cnt;
+	char *p, *lbuf;
+	long line_max;
+
+	line_max = sysconf(_SC_LINE_MAX);
+	if (line_max <= 0)
+		line_max = 512;
+
+	lbuf = xmalloc(line_max);
 
 	if (print_banner == TRUE) {
 		char *hostname = xgethostname();
-		char *whombuf, *whom, *where, date[CTIME_BUFSIZ];
+		char *whom, *where, date[CTIME_BUFSIZ];
 		time_t now;
 
-		whombuf = whom = xgetlogin();
+		whom = xgetlogin();
 		if (!whom) {
 			whom = "<someone>";
 			warn(_("cannot get passwd uid"));
@@ -379,16 +379,15 @@ static char *makemsg(char *fname, char **mvec, int mvecsz,
 		 */
 		/* snprintf is not always available, but the sprintf's here
 		   will not overflow as long as %d takes at most 100 chars */
-		fprintf(fs, "\r%*s\r\n", TERM_WIDTH, " ");
+		buf_printf(bs, "\r%*s\r\n", TERM_WIDTH, " ");
 
-		snprintf(lbuf, lbuflen,
+		snprintf(lbuf, line_max,
 				_("Broadcast message from %s@%s (%s) (%s):"),
 				whom, hostname, where, date);
-		fprintf(fs, "%-*.*s\007\007\r\n", TERM_WIDTH, TERM_WIDTH, lbuf);
+		buf_printf(bs, "%-*.*s\007\007\r\n", TERM_WIDTH, TERM_WIDTH, lbuf);
 		free(hostname);
-		free(whombuf);
 	}
-	fprintf(fs, "%*s\r\n", TERM_WIDTH, " ");
+	buf_printf(bs, "%*s\r\n", TERM_WIDTH, " ");
 
 	 if (mvec) {
 		/*
@@ -397,11 +396,11 @@ static char *makemsg(char *fname, char **mvec, int mvecsz,
 		int i;
 
 		for (i = 0; i < mvecsz; i++) {
-			fputs_careful(mvec[i], fs, '^', true, TERM_WIDTH);
+			buf_puts(bs, mvec[i]);
 			if (i < mvecsz - 1)
-				fputc(' ', fs);
+				buf_puts(bs, " ");
 		}
-		fputs("\r\n", fs);
+		buf_puts(bs, "\r\n");
 	} else {
 		/*
 		 * read message from <file>
@@ -426,13 +425,26 @@ static char *makemsg(char *fname, char **mvec, int mvecsz,
 		/*
 		 * Read message from stdin.
 		 */
-		while (getline(&lbuf, &lbuflen, stdin) >= 0)
-			fputs_careful(lbuf, fs, '^', true, TERM_WIDTH);
+		while (fgets(lbuf, line_max, stdin)) {
+			for (cnt = 0, p = lbuf; (ch = *p) != '\0'; ++p, ++cnt) {
+				if (cnt == TERM_WIDTH || ch == '\n') {
+					for (; cnt < TERM_WIDTH; ++cnt)
+						buf_puts(bs, " ");
+					buf_puts(bs, "\r\n");
+					cnt = 0;
+				}
+				if (ch == '\t')
+					cnt += (7 - (cnt % 8));
+				if (ch != '\n')
+					buf_putc_careful(bs, ch);
+			}
+		}
 	}
-	fprintf(fs, "%*s\r\n", TERM_WIDTH, " ");
+	buf_printf(bs, "%*s\r\n", TERM_WIDTH, " ");
 
 	free(lbuf);
 
-	fclose(fs);
-	return retbuf;
+	bs->data[bs->used] = '\0';	/* be paranoid */
+	*mbufsize = bs->used;
+	return bs->data;
 }

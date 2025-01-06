@@ -38,14 +38,11 @@ static const char *lib_features[] = {
 #ifdef USE_LIBMOUNT_SUPPORT_NAMESPACES
 	"namespaces",
 #endif
-#if defined(HAVE_MOUNTFD_API) && defined(HAVE_LINUX_MOUNT_H)
+#ifdef HAVE_MOUNTFD_API
 	"idmapping",
 #endif
 #ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
 	"fd-based-mount",
-#endif
-#if defined(HAVE_STATX) && defined(HAVE_STRUCT_STATX) && defined(AT_STATX_DONT_SYNC)
-	"statx",
 #endif
 #if !defined(NDEBUG)
 	"assert",	/* libc assert.h stuff */
@@ -121,8 +118,7 @@ int mnt_get_library_features(const char ***features)
 }
 
 #ifdef TEST_PROGRAM
-static int test_version(struct libmnt_test *ts __attribute__((unused)),
-			int argc, char *argv[])
+static int test_version(struct libmnt_test *ts, int argc, char *argv[])
 {
 	const char *ver;
 	const char **features;

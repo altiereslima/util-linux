@@ -19,8 +19,6 @@
 #include <sys/types.h>
 
 #include "env.h"
-#include "strv.h"
-#include "all-io.h"
 
 #ifndef HAVE_ENVIRON_DECL
 extern char **environ;
@@ -53,151 +51,54 @@ static char * const noslash[] = {
 
 
 struct ul_env_list {
-	char	*name;
-	char	*value;
-
+	char *env;
 	struct ul_env_list *next;
 };
 
 /*
- * Saves to the list and returns a pointer to the new head of the list.
+ * Saves @name env.variable to @ls, returns pointer to the new head of the list.
  */
-static struct ul_env_list *env_list_add( struct ul_env_list *ls0,
-					 const char *name, size_t namesz,
-					 const char *value, size_t valsz)
+static struct ul_env_list *env_list_add(struct ul_env_list *ls0, const char *str)
 {
 	struct ul_env_list *ls;
+	char *p;
+	size_t sz = 0;
 
-	ls = calloc(1, sizeof(struct ul_env_list) + namesz + valsz + 2);
-	if (!ls)
+	if (!str || !*str)
 		return ls0;
 
-	ls->name = ((char *) ls) + sizeof(struct ul_env_list);
-	ls->value = ls->name + namesz + 1;
+	sz = strlen(str) + 1;
+	p = malloc(sizeof(struct ul_env_list) + sz);
+	if (!p)
+		return ls0;
 
-	memcpy(ls->name, name, namesz);
-	memcpy(ls->value, value, valsz);
+	ls = (struct ul_env_list *) p;
+	p += sizeof(struct ul_env_list);
+	memcpy(p, str, sz);
+	ls->env = p;
 
 	ls->next = ls0;
 	return ls;
 }
 
 /*
- * Saves the @str (with the name=value string) to the @ls and returns a pointer
- * to the new head of the list.
- */
-static struct ul_env_list *env_list_add_from_string(struct ul_env_list *ls,
-						    const char *str)
-{
-	size_t namesz = 0, valsz = 0;
-	const char *val;
-
-	if (!str || !*str)
-		return ls;
-
-	val = strchr(str, '=');
-	if (!val)
-		return NULL;
-	namesz = val - str;
-
-	val++;
-	valsz = strlen(val);
-
-	return env_list_add(ls, str, namesz, val, valsz);
-}
-
-/*
- * Saves the @name and @value to @ls0 and returns a pointer to the new head of
- * the list.
- */
-struct ul_env_list *env_list_add_variable(
-				struct ul_env_list *ls,
-				const char *name, const char *value)
-{
-	if (!name || !*name)
-		return ls;
-
-	return env_list_add(ls, name, strlen(name), value, value ? strlen(value) : 0);
-}
-
-/*
- * Calls getenv() and adds the result to the list.
- */
-struct ul_env_list *env_list_add_getenv(struct ul_env_list *ls,
-				const char *name, const char *dflt)
-{
-	const char *val;
-
-	if (!name)
-		return ls;
-
-	val = getenv(name);
-	if (!val)
-		val= dflt;
-	if (val)
-		ls = env_list_add_variable(ls, name, val);
-	return ls;
-}
-
-/*
- * Calls getenv() for each name (comma-separated) in @str and adds the results
- * to the list.
- */
-struct ul_env_list *env_list_add_getenvs(struct ul_env_list *ls, const char *str)
-{
-	char **all, **name;
-
-	if (!str)
-		return ls;
-
-	all = strv_split(str, ",");
-	if (!all)
-		return ls;
-
-	STRV_FOREACH(name, all)
-		ls = env_list_add_getenv(ls, *name, NULL);
-
-	strv_free(all);
-	return ls;
-}
-
-/*
- * Use env_list_from_fd() to read environment from @fd.
- *
- * @fd must be /proc/<pid>/environ file.
-*/
-struct ul_env_list *env_list_from_fd(int fd)
-{
-	char *buf = NULL, *p;
-	ssize_t rc = 0;
-	struct ul_env_list *ls = NULL;
-
-	errno = 0;
-	if ((rc = read_all_alloc(fd, &buf)) < 1)
-		return NULL;
-	buf[rc] = '\0';
-	p = buf;
-
-	while (rc > 0) {
-		ls = env_list_add_from_string(ls, p);
-		p += strlen(p) + 1;
-		rc -= strlen(p) + 1;
-	}
-
-	free(buf);
-	return ls;
-}
-
-/*
  * Use setenv() for all stuff in @ls.
+ *
+ * It would be possible to use putenv(), but we want to keep @ls free()-able.
  */
-int env_list_setenv(struct ul_env_list *ls, int overwrite)
+int env_list_setenv(struct ul_env_list *ls)
 {
 	int rc = 0;
 
 	while (ls && rc == 0) {
-		if (ls->name && ls->value)
-			rc = setenv(ls->name, ls->value, overwrite);
+		if (ls->env) {
+			char *val = strchr(ls->env, '=');
+			if (!val)
+				continue;
+			*val = '\0';
+			rc = setenv(ls->env, val + 1, 0);
+			*val = '=';
+		}
 		ls = ls->next;
 	}
 	return rc;
@@ -230,8 +131,8 @@ void __sanitize_env(struct ul_env_list **org)
                 for (bad = forbid; *bad; bad++) {
                         if (strncmp(*cur, *bad, strlen(*bad)) == 0) {
 				if (org)
-					*org = env_list_add_from_string(*org, *cur);
-                                last = ul_remove_entry(envp, cur - envp, last);
+					*org = env_list_add(*org, *cur);
+                                last = remote_entry(envp, cur - envp, last);
                                 cur--;
                                 break;
                         }
@@ -245,8 +146,8 @@ void __sanitize_env(struct ul_env_list **org)
                         if (!strchr(*cur, '/'))
                                 continue;  /* OK */
 			if (org)
-				*org = env_list_add_from_string(*org, *cur);
-                        last = ul_remove_entry(envp, cur - envp, last);
+				*org = env_list_add(*org, *cur);
+                        last = remote_entry(envp, cur - envp, last);
                         cur--;
                         break;
                 }
@@ -289,13 +190,12 @@ int main(void)
 	int retval = EXIT_SUCCESS;
 	struct ul_env_list *removed = NULL;
 
-	/* define env. */
 	for (bad = forbid; *bad; bad++) {
 		strcpy(copy, *bad);
 		p = strchr(copy, '=');
 		if (p)
 			*p = '\0';
-		setenv(copy, "abc", 1);
+		setenv(copy, copy, 1);
 	}
 
 	/* removed */
@@ -315,7 +215,7 @@ int main(void)
 	}
 
 	/* restore removed */
-	env_list_setenv(removed, 0);
+	env_list_setenv(removed);
 
 	/* check restore */
 	for (bad = forbid; *bad; bad++) {

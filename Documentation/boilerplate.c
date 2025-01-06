@@ -2,18 +2,25 @@
  * util-linux package.
  * -- remove above */
 /*
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * fixme-command-name - purpose of it
  *
  * Copyright (c) 20nn  Example Commercial, Inc
  * Written by Your Name <you@example.com>
  *
- * fixme-command-name - purpose of it
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+
 #include <getopt.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -30,26 +37,26 @@
 static void __attribute__((__noreturn__)) usage(void)
 {
 	fputs(USAGE_HEADER, stdout);
-	fprintf(stdout, _(" %s [options] file...\n"), program_invocation_short_name);
+	printf(_(" %s [options] file...\n"), program_invocation_short_name);
 
 	fputs(USAGE_SEPARATOR, stdout);
-	fputsln(_("Short program description."), stdout);
+	puts(_("Short program description."));
 
 	fputs(USAGE_OPTIONS, stdout);
-	fputsln(_(" -n, --no-argument       option does not use argument"), stdout);
-	fputsln(_("     --optional[=<arg>]  option argument is optional"), stdout);
-	fputsln(_(" -r, --required <arg>    option requires an argument"), stdout);
-	fputsln(_(" -z                      no long option"), stdout);
-	fputsln(_("     --xyzzy             a long option only"), stdout);
-	fputsln(_(" -e, --extremely-long-long-option\n"
-	       "                         use next line for description when needed"), stdout);
-	fputsln(_(" -l, --long-explanation  an example of very verbose, and chatty option\n"
+	puts(_(" -n, --no-argument       option does not use argument"));
+	puts(_("     --optional[=<arg>]  option argument is optional"));
+	puts(_(" -r, --required <arg>    option requires an argument"));
+	puts(_(" -z                      no long option"));
+	puts(_("     --xyzzy             a long option only"));
+	puts(_(" -e, --extremely-long-long-option\n"
+	       "                         use next line for description when needed"));
+	puts(_(" -l, --long-explanation  an example of very verbose, and chatty option\n"
 	       "                           description on two, or multiple lines, where the\n"
-	       "                           consecutive lines are intended by two spaces"), stdout);
-	fputsln(_(" -f, --foobar            next option description resets indent"), stdout);
+	       "                           consecutive lines are intended by two spaces"));
+	puts(_(" -f, --foobar            next option description resets indent"));
 	fputs(USAGE_SEPARATOR, stdout);
-	fprintf(stdout, USAGE_HELP_OPTIONS(25)); /* char offset to align option descriptions */
-	fprintf(stdout, USAGE_MAN_TAIL("fixme-command-name(1)"));
+	printf(USAGE_HELP_OPTIONS(25)); /* char offset to align option descriptions */
+	printf(USAGE_MAN_TAIL("fixme-command-name(1)"));
 	exit(EXIT_SUCCESS);
 }
 

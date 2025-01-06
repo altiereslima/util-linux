@@ -36,7 +36,6 @@ _lsns_module()
 	case $cur in
 		-*)
 			COMPREPLY=( $(compgen -W "
-					--filter
 					--json
 					--list
 					--noheadings

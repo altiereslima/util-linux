@@ -18,22 +18,18 @@
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <sys/ioctl.h>
-#include <sys/mount.h>
 #include <inttypes.h>
 
+#include "mountP.h"
 #include "strutils.h"
 #include "all-io.h"
 #include "namespace.h"
-#include "mount-api-utils.h"
-
-#include "mountP.h"
 
 #ifdef HAVE_LINUX_NSFS_H
 # include <linux/nsfs.h>
 #endif
 
-#if defined(HAVE_MOUNTFD_API) && defined(HAVE_LINUX_MOUNT_H)
+#ifdef HAVE_MOUNTFD_API
 
 typedef enum idmap_type_t {
 	ID_TYPE_UID,	/* uidmap entry */
@@ -214,14 +210,8 @@ static int get_userns_fd_from_idmap(struct list_head *idmap)
 		if (rc < 0)
 			_exit(EXIT_FAILURE);
 
-		/* Let parent know we're ready to have the idmapping written. */
 		rc = write_all(sock_fds[0], &c, 1);
 		if (rc)
-			_exit(EXIT_FAILURE);
-
-		/* Hang around until the parent has persisted our namespace. */
-		rc = read_all(sock_fds[0], &c, 1);
-		if (rc != 1)
 			_exit(EXIT_FAILURE);
 
 		close(sock_fds[0]);
@@ -231,24 +221,16 @@ static int get_userns_fd_from_idmap(struct list_head *idmap)
 	close(sock_fds[0]);
 	sock_fds[0] = -1;
 
-	/* Wait for child to set up a new namespace. */
 	rc = read_all(sock_fds[1], &c, 1);
-	if (rc != 1) {
-		kill(pid, SIGKILL);
+	if (rc != 1)
 		goto err_wait;
-	}
 
 	rc = map_ids(idmap, pid);
-	if (rc < 0) {
-		kill(pid, SIGKILL);
+	if (rc < 0)
 		goto err_wait;
-	}
 
 	snprintf(path, sizeof(path), "/proc/%d/ns/user", pid);
 	fd_userns = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
-
-	/* Let child know we've persisted its namespace. */
-	(void)write_all(sock_fds[1], &c, 1);
 
 err_wait:
 	rc = wait_for_pid(pid);
@@ -303,10 +285,10 @@ static int hook_mount_post(
 		.attr_set	= MOUNT_ATTR_IDMAP,
 		.userns_fd	= hd->userns_fd
 	};
-	const int recursive = mnt_optlist_is_rpropagation(cxt->optlist);
+	const int recursive = mnt_optlist_is_recursive(cxt->optlist);
 	const char *target = mnt_fs_get_target(cxt->fs);
 	int fd_tree = -1;
-	int rc, is_private = 1;
+	int rc;
 
 	assert(hd);
 	assert(target);
@@ -318,19 +300,7 @@ static int hook_mount_post(
 	 * Once a mount has been attached to the filesystem it can't be
 	 * idmapped anymore. So create a new detached mount.
 	 */
-#ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-	{
-		struct libmnt_sysapi *api = mnt_context_get_sysapi(cxt);
-
-		if (api && api->fd_tree >= 0) {
-			fd_tree = api->fd_tree;
-			is_private = 0;
-			DBG(HOOK, ul_debugobj(hs, " reuse tree FD"));
-		}
-	}
-#endif
-	if (fd_tree < 0)
-		fd_tree = open_tree(-1, target,
+	fd_tree = open_tree(-1, target,
 			    OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC |
 			    (recursive ? AT_RECURSIVE : 0));
 	if (fd_tree < 0) {
@@ -346,19 +316,20 @@ static int hook_mount_post(
 		DBG(HOOK, ul_debugobj(hs, " failed to set attributes"));
 		goto done;
 	}
+	/* Unmount the old, non-idmapped mount we just cloned and idmapped. */
+	rc = umount(target);
+	if (rc < 0) {
+		DBG(HOOK, ul_debugobj(hs, " failed to set umount target"));
+		goto done;
+	}
 
 	/* Attach the idmapped mount. */
-	if (is_private) {
-		/* Unmount the old, non-idmapped mount we just cloned and idmapped. */
-		umount2(target, MNT_DETACH);
+	rc = move_mount(fd_tree, "", -1, target, MOVE_MOUNT_F_EMPTY_PATH);
+	if (rc)
+		DBG(HOOK, ul_debugobj(hs, " failed to set move mount"));
 
-		rc = move_mount(fd_tree, "", -1, target, MOVE_MOUNT_F_EMPTY_PATH);
-		if (rc)
-			DBG(HOOK, ul_debugobj(hs, " failed to set move mount"));
-	}
 done:
-	if (is_private)
-		close(fd_tree);
+	close(fd_tree);
 	if (rc < 0)
 		return -MNT_ERR_IDMAP;
 
@@ -387,11 +358,9 @@ static int hook_prepare_options(
 	opt = mnt_optlist_get_named(ol, "X-mount.idmap", cxt->map_userspace);
 	if (!opt)
 		return 0;
-
 	value = mnt_opt_get_value(opt);
-	if (value)
-		value = skip_blank(value);
-	if (!value || !*value)
+
+	if (!value)
 		return errno = EINVAL, -MNT_ERR_MOUNTOPT;
 
 	hd = new_hook_data();
@@ -473,7 +442,6 @@ static int hook_prepare_options(
 done:
 	/* define post-mount hook to enter the namespace */
 	DBG(HOOK, ul_debugobj(hs, " wanted new user namespace"));
-	cxt->force_clone = 1; /* require OPEN_TREE_CLONE */
 	rc = mnt_context_append_hook(cxt, hs,
 				MNT_STAGE_MOUNT_POST,
 				hd, hook_mount_post);
@@ -518,4 +486,4 @@ const struct libmnt_hookset hookset_idmap =
 	.deinit = hookset_deinit
 };
 
-#endif /* HAVE_MOUNTFD_API && HAVE_LINUX_MOUNT_H */
+#endif /* HAVE_MOUNTFD_API */

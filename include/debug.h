@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: LGPL-2.1-or-later
- *
  * Copyright (C) 2014 Ondrej Oprala <ooprala@redhat.com>
  * Copyright (C) 2014 Karel Zak <kzak@redhat.com>
  *

@@ -1,8 +1,3 @@
-
-/*
- * No copyright is claimed.  This code is in the public domain; do with
- * it what you wish.
- */
 #ifndef UTIL_LINUX_FILEEQ
 #define UTIL_LINUX_FILEEQ
 

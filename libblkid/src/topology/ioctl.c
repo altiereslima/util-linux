@@ -18,38 +18,52 @@
 
 #include "topology.h"
 
+/*
+ * ioctl topology values
+ */
+static const struct topology_val {
+
+	long  ioc;
+
+	/* functions to set probing result */
+	int (*set_ulong)(blkid_probe, unsigned long);
+	int (*set_int)(blkid_probe, int);
+
+} topology_vals[] = {
+	{ BLKALIGNOFF, NULL, blkid_topology_set_alignment_offset },
+	{ BLKIOMIN, blkid_topology_set_minimum_io_size },
+	{ BLKIOOPT, blkid_topology_set_optimal_io_size },
+	{ BLKPBSZGET, blkid_topology_set_physical_sector_size },
+	{ BLKGETDISKSEQ, blkid_topology_set_diskseq },
+	/* we read BLKSSZGET in topology.c */
+};
+
 static int probe_ioctl_tp(blkid_probe pr,
 		const struct blkid_idmag *mag __attribute__((__unused__)))
 {
-	uint64_t u64;
-	int s32;
+	size_t i;
 
-	if (ioctl(pr->fd, BLKALIGNOFF, &s32) == -1)
-		return 1;
-	if (blkid_topology_set_alignment_offset(pr, s32))
-		return -1;
+	for (i = 0; i < ARRAY_SIZE(topology_vals); i++) {
+		const struct topology_val *val = &topology_vals[i];
+		int rc = 1;
+		unsigned int data;
 
-	if (ioctl(pr->fd, BLKIOMIN, &s32) == -1)
-		return 1;
-	if (blkid_topology_set_minimum_io_size(pr, s32))
-		return -1;
+		if (ioctl(pr->fd, val->ioc, &data) == -1)
+			goto nothing;
 
-	if (ioctl(pr->fd, BLKIOOPT, &s32) == -1)
-		return 1;
-	if (blkid_topology_set_optimal_io_size(pr, s32))
-		return -1;
-
-	if (ioctl(pr->fd, BLKPBSZGET, &s32) == -1)
-		return 1;
-	if (blkid_topology_set_physical_sector_size(pr, s32))
-		return -1;
-
-	if (ioctl(pr->fd, BLKGETDISKSEQ, &u64) == -1)
-		return 1;
-	if (blkid_topology_set_physical_sector_size(pr, u64))
-		return -1;
+		if (val->set_int)
+			rc = val->set_int(pr, (int) data);
+		else
+			rc = val->set_ulong(pr, (unsigned long) data);
+		if (rc)
+			goto err;
+	}
 
 	return 0;
+nothing:
+	return 1;
+err:
+	return -1;
 }
 
 const struct blkid_idinfo ioctl_tp_idinfo =

@@ -1,15 +1,11 @@
 /*
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  * mkfs.minix.c - make a linux (minix) file-system.
  *
  * (C) 1991 Linus Torvalds. This file may be redistributed as per
  * the Linux copyright.
-*
+ */
+
+/*
  * DD.MM.YY
  *
  * 24.11.91  -	Time began. Used the fsck sources to get started.
@@ -58,7 +54,6 @@
  *
  */
 
-#include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
@@ -118,7 +113,8 @@ struct fs_control {
 	size_t fs_dirsize;		/* maximum size of directory */
 	unsigned long fs_inodes;	/* number of inodes */
 	int fs_magic;			/* file system magic number */
-	bool check_blocks;		/* check for bad blocks */
+	unsigned int
+	 check_blocks:1;		/* check for bad blocks */
 };
 
 static char root_block[MINIX_BLOCK_SIZE];
@@ -152,8 +148,8 @@ static void __attribute__((__noreturn__)) usage(void)
 	fprintf(out, _(
 		"     --lock[=<mode>]     use exclusive device lock (%s, %s or %s)\n"), "yes", "no", "nonblock");
 	fputs(USAGE_SEPARATOR, out);
-	fprintf(out, USAGE_HELP_OPTIONS(25));
-	fprintf(out, USAGE_MAN_TAIL("mkfs.minix(8)"));
+	printf(USAGE_HELP_OPTIONS(25));
+	printf(USAGE_MAN_TAIL("mkfs.minix(8)"));
 	exit(MKFS_EX_OK);
 }
 
@@ -161,9 +157,9 @@ static void __attribute__((__noreturn__)) usage(void)
 static inline time_t mkfs_minix_time(time_t *t)
 {
 	const char *str = getenv("MKFS_MINIX_TEST_SECOND_SINCE_EPOCH");
-	uint64_t sec;
+	time_t sec;
 
-	if (str && sscanf(str, "%"SCNd64, &sec) == 1)
+	if (str && sscanf(str, "%ld", &sec) == 1)
 		return sec;
 	return time(t);
 }

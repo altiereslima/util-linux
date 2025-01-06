@@ -24,7 +24,6 @@ enum {
 	FL_SHADOWED	= (1 << 20),
 	FL_DELETED      = (1 << 21),
 	FL_SHELLVAR     = (1 << 22),
-	FL_DF_INODES	= (1 << 23),
 
 	/* basic table settings */
 	FL_ASCII	= (1 << 25),
@@ -35,16 +34,12 @@ enum {
 	FL_JSON		= (1 << 30),
 };
 
-struct findmnt {
-	struct libmnt_cache *cache;
-	unsigned int flags;
-	int parse_nerrors;
-	char *uri;
-	struct libscols_filter *filter;
-};
+extern struct libmnt_cache *cache;
+extern unsigned int flags;
+extern int parse_nerrors;
 
-extern int is_listall_mode(unsigned int flags);
-extern struct libmnt_fs *get_next_fs(struct libmnt_table *tb, struct libmnt_iter *itr, struct findmnt *findmnt);
-extern int verify_table(struct libmnt_table *tb, struct findmnt *findmnt);
+extern int is_listall_mode(void);
+extern struct libmnt_fs *get_next_fs(struct libmnt_table *tb, struct libmnt_iter *itr);
+extern int verify_table(struct libmnt_table *tb);
 
 #endif /* UTIL_LINUX_FINDMNT_H */

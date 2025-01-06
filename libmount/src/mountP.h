@@ -29,6 +29,7 @@
 #include "debug.h"
 #include "buffer.h"
 #include "libmount.h"
+#include "mount-api-utils.h"
 
 /*
  * Debug
@@ -126,10 +127,8 @@ extern int mnt_get_filesystems(char ***filesystems, const char *pattern);
 extern void mnt_free_filesystems(char **filesystems);
 
 extern char *mnt_get_kernel_cmdline_option(const char *name);
-
-extern int mnt_safe_stat(const char *target, struct stat *st);
-extern int mnt_safe_lstat(const char *target, struct stat *st);
-extern int mnt_is_path(const char *target);
+extern int mnt_stat_mountpoint(const char *target, struct stat *st);
+extern int mnt_lstat_mountpoint(const char *target, struct stat *st);
 
 extern int mnt_tmptgt_unshare(int *old_ns_fd);
 extern int mnt_tmptgt_cleanup(int old_ns_fd);
@@ -175,11 +174,9 @@ struct libmnt_iter {
 		(itr)->head = (list); \
 	} while(0)
 
-#define MNT_ITER_GET_ENTRY(itr, restype, member) \
-		list_entry((itr)->p, restype, member)
-
-#define MNT_ITER_ITERATE(itr) \
+#define MNT_ITER_ITERATE(itr, res, restype, member) \
 	do { \
+		res = list_entry((itr)->p, restype, member); \
 		(itr)->p = IS_ITER_FORWARD(itr) ? \
 				(itr)->p->next : (itr)->p->prev; \
 	} while(0)
@@ -324,9 +321,6 @@ extern const struct libmnt_hookset hookset_loopdev;
 #ifdef HAVE_CRYPTSETUP
 extern const struct libmnt_hookset hookset_veritydev;
 #endif
-#ifdef HAVE_LIBSELINUX
-extern const struct libmnt_hookset hookset_selinux;
-#endif
 
 extern int mnt_context_deinit_hooksets(struct libmnt_context *cxt);
 extern const struct libmnt_hookset *mnt_context_get_hookset(struct libmnt_context *cxt, const char *name);
@@ -344,14 +338,6 @@ extern int mnt_context_has_hook(struct libmnt_context *cxt,
                          void *data);
 
 extern int mnt_context_append_hook(struct libmnt_context *cxt,
-			const struct libmnt_hookset *hs,
-			int stage,
-			void *data,
-			int (*func)(struct libmnt_context *,
-				const struct libmnt_hookset *,
-				void *));
-extern int mnt_context_insert_hook(struct libmnt_context *cxt,
-			const char *after,
 			const struct libmnt_hookset *hs,
 			int stage,
 			void *data,
@@ -413,7 +399,7 @@ struct libmnt_context
 	const struct libmnt_optmap *map_linux;		/* system options map */
 	const struct libmnt_optmap *map_userspace;	/* userspace options map */
 
-	const char	*mountinfo_path; /* usually /proc/self/moutinfo */
+	const char	*mountinfo_path; /* usualy /proc/self/moutinfo */
 
 	const char	*utab_path; /* path to utab */
 	int		utab_writable; /* is utab writable */
@@ -432,7 +418,6 @@ struct libmnt_context
 
 	int	syscall_status;	/* 1: not called yet, 0: success, <0: -errno */
 	const char *syscall_name;	/* failed syscall name */
-	char	*errmsg;	/* library or kernel message */
 
 	struct libmnt_ns	ns_orig;	/* original namespace */
 	struct libmnt_ns	ns_tgt;		/* target namespace */
@@ -440,8 +425,6 @@ struct libmnt_context
 
 	unsigned int	enabled_textdomain : 1;	/* bindtextdomain() called */
 	unsigned int	noautofs : 1;		/* ignore autofs mounts */
-	unsigned int	has_selinux_opt : 1;	/* temporary for broken fsconfig() syscall */
-	unsigned int    force_clone : 1;	/* OPEN_TREE_CLONE */
 
 	struct list_head	hooksets_datas;	/* global hooksets data */
 	struct list_head	hooksets_hooks;	/* global hooksets data */
@@ -480,6 +463,16 @@ struct libmnt_context
 /* Flags usable with MS_BIND|MS_REMOUNT */
 #define MNT_BIND_SETTABLE	(MS_NOSUID|MS_NODEV|MS_NOEXEC|MS_NOATIME|MS_NODIRATIME|MS_RELATIME|MS_RDONLY|MS_NOSYMFOLLOW)
 
+#define set_syscall_status(_cxt, _name, _x) __extension__ ({ \
+		if (!(_x)) { \
+			DBG(CXT, ul_debug("syscall '%s' [%m]", _name)); \
+			(_cxt)->syscall_status = -errno; \
+			(_cxt)->syscall_name = (_name); \
+		} else { \
+			DBG(CXT, ul_debug("syscall '%s' [succes]", _name)); \
+			(_cxt)->syscall_status = 0; \
+		} \
+	})
 
 /* optmap.c */
 extern const struct libmnt_optmap *mnt_optmap_get_entry(
@@ -491,11 +484,10 @@ extern const struct libmnt_optmap *mnt_optmap_get_entry(
 
 /* optstr.c */
 extern int mnt_optstr_remove_option_at(char **optstr, char *begin, char *end);
-extern int mnt_optstr_get_missing(const char *optstr, const char *wanted, char **missing);
 
 extern int mnt_buffer_append_option(struct ul_buffer *buf,
                         const char *name, size_t namesz,
-                        const char *val, size_t valsz, int quoted);
+                        const char *val, size_t valsz);
 
 /* optlist.h */
 struct libmnt_opt;
@@ -550,16 +542,9 @@ enum {
 	__MNT_OL_FLTR_COUNT	/* keep it last */
 };
 
-
 extern int mnt_optlist_get_flags(struct libmnt_optlist *ls, unsigned long *flags,
                           const struct libmnt_optmap *map, unsigned int what);
-
-/* recursive status for mnt_optlist_get_attrs() */
-#define MNT_OL_REC	1
-#define MNT_OL_NOREC	2
-
-extern int mnt_optlist_get_attrs(struct libmnt_optlist *ls, uint64_t *set, uint64_t *clr, int rec);
-
+extern int mnt_optlist_get_attrs(struct libmnt_optlist *ls, uint64_t *set, uint64_t *clr);
 extern int mnt_optlist_get_optstr(struct libmnt_optlist *ol, const char **optstr,
                         const struct libmnt_optmap *map, unsigned int what);
 extern int mnt_optlist_strdup_optstr(struct libmnt_optlist *ls, char **optstr,
@@ -568,7 +553,7 @@ extern int mnt_optlist_strdup_optstr(struct libmnt_optlist *ls, char **optstr,
 extern int mnt_optlist_get_propagation(struct libmnt_optlist *ls);
 extern int mnt_optlist_is_propagation_only(struct libmnt_optlist *ls);
 extern int mnt_optlist_is_remount(struct libmnt_optlist *ls);
-extern int mnt_optlist_is_rpropagation(struct libmnt_optlist *ls);
+extern int mnt_optlist_is_recursive(struct libmnt_optlist *ls);
 extern int mnt_optlist_is_bind(struct libmnt_optlist *ls);
 extern int mnt_optlist_is_rbind(struct libmnt_optlist *ls);
 extern int mnt_optlist_is_move(struct libmnt_optlist *ls);
@@ -587,8 +572,6 @@ extern int mnt_opt_set_value(struct libmnt_opt *opt, const char *str);
 extern int mnt_opt_set_u64value(struct libmnt_opt *opt, uint64_t num);
 extern int mnt_opt_set_quoted_value(struct libmnt_opt *opt, const char *str);
 extern int mnt_opt_is_external(struct libmnt_opt *opt);
-extern int mnt_opt_is_sepnodata(struct libmnt_opt *opt);
-extern int mnt_opt_value_with(struct libmnt_opt *opt, const char *str);
 
 /* fs.c */
 extern int mnt_fs_follow_optlist(struct libmnt_fs *fs, struct libmnt_optlist *ol);
@@ -601,15 +584,9 @@ extern int __mnt_fs_set_target_ptr(struct libmnt_fs *fs, char *tgt)
 			__attribute__((nonnull(1)));
 
 /* context.c */
-extern void mnt_context_syscall_save_status(struct libmnt_context *cxt,
-                                        const char *syscallname, int success);
-extern void mnt_context_syscall_reset_status(struct libmnt_context *cxt);
-
 extern struct libmnt_context *mnt_copy_context(struct libmnt_context *o);
 extern int mnt_context_utab_writable(struct libmnt_context *cxt);
 extern const char *mnt_context_get_writable_tabpath(struct libmnt_context *cxt);
-
-extern int mnt_context_within_helper(struct libmnt_context *cxt);
 
 extern int mnt_context_get_mountinfo(struct libmnt_context *cxt, struct libmnt_table **tb);
 extern int mnt_context_get_mountinfo_for_target(struct libmnt_context *cxt,
@@ -626,10 +603,6 @@ extern int mnt_context_update_tabs(struct libmnt_context *cxt);
 
 extern int mnt_context_umount_setopt(struct libmnt_context *cxt, int c, char *arg);
 extern int mnt_context_mount_setopt(struct libmnt_context *cxt, int c, char *arg);
-
-extern int mnt_context_set_errmsg(struct libmnt_context *cxt, const char *msg);
-extern int mnt_context_append_errmsg(struct libmnt_context *cxt, const char *msg);
-extern int mnt_context_sprintf_errmsg(struct libmnt_context *cxt, const char *msg, ...);
 
 extern int mnt_context_propagation_only(struct libmnt_context *cxt)
 			__attribute__((nonnull));
@@ -655,14 +628,10 @@ extern int mnt_context_apply_fs(struct libmnt_context *cxt, struct libmnt_fs *fs
 
 extern struct libmnt_optlist *mnt_context_get_optlist(struct libmnt_context *cxt);
 
-extern int mnt_context_is_xnocanonicalize(struct libmnt_context *cxt, const char *type);
-
 /* tab_update.c */
-extern int mnt_update_emit_event(struct libmnt_update *upd);
 extern int mnt_update_set_filename(struct libmnt_update *upd, const char *filename);
-extern int mnt_update_already_done(struct libmnt_update *upd);
-extern int mnt_update_start(struct libmnt_update *upd);
-extern int mnt_update_end(struct libmnt_update *upd);
+extern int mnt_update_already_done(struct libmnt_update *upd,
+				   struct libmnt_lock *lc);
 
 #if __linux__
 /* btrfs.c */
@@ -674,17 +643,12 @@ extern uint64_t btrfs_get_default_subvol_id(const char *path);
 struct libmnt_sysapi {
 	int	fd_fs;		/* FD from fsopen() or fspick() */
 	int	fd_tree;	/* FD from fsmount() or open_tree() */
-
-	unsigned int is_new_fs : 1 ;	/* fd_fs comes from fsopen() */
 };
 
 static inline struct libmnt_sysapi *mnt_context_get_sysapi(struct libmnt_context *cxt)
 {
 	return mnt_context_get_hookset_data(cxt, &hookset_mount);
 }
-
-int mnt_context_open_tree(struct libmnt_context *cxt, const char *path, unsigned long mflg);
-
 #endif
 
 #endif /* _LIBMOUNT_PRIVATE_H */

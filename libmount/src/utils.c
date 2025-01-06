@@ -100,70 +100,24 @@ static int fstype_cmp(const void *v1, const void *v2)
 	return strcmp(s1, s2);
 }
 
-/* This very simplified stat() alternative uses cached VFS data and does not
- * directly ask the filesystem for details. It requires a kernel that supports
- * statx(). It's usable only for file type, rdev and ino!
- */
-static int safe_stat(const char *target, struct stat *st, int nofollow)
+int mnt_stat_mountpoint(const char *target, struct stat *st)
 {
-	assert(target);
-	assert(st);
-
-	memset(st, 0, sizeof(struct stat));
-
-#if defined(HAVE_STATX) && defined(HAVE_STRUCT_STATX) && defined(AT_STATX_DONT_SYNC)
-	{
-		int rc;
-		struct statx stx = { 0 };
-
-		rc = statx(AT_FDCWD, target,
-				/* flags */
-				AT_STATX_DONT_SYNC
-					| AT_NO_AUTOMOUNT
-					| (nofollow ? AT_SYMLINK_NOFOLLOW : 0),
-				/* mask */
-				STATX_TYPE
-					| STATX_MODE
-					| STATX_INO,
-				&stx);
-		if (rc == 0) {
-			st->st_ino  = stx.stx_ino;
-			st->st_dev  = makedev(stx.stx_dev_major, stx.stx_dev_minor);
-			st->st_rdev = makedev(stx.stx_rdev_major, stx.stx_rdev_minor);
-			st->st_mode = stx.stx_mode;
-		}
-
-		if (rc == 0 ||
-		    (errno != EOPNOTSUPP && errno != ENOSYS && errno != EINVAL))
-			return rc;
-	}
-#endif
-
 #ifdef AT_NO_AUTOMOUNT
-	return fstatat(AT_FDCWD, target, st,
-			AT_NO_AUTOMOUNT | (nofollow ? AT_SYMLINK_NOFOLLOW : 0));
+	return fstatat(AT_FDCWD, target, st, AT_NO_AUTOMOUNT);
+#else
+	return stat(target, st);
 #endif
-	return nofollow ? lstat(target, st) : stat(target, st);
 }
 
-int mnt_safe_stat(const char *target, struct stat *st)
+int mnt_lstat_mountpoint(const char *target, struct stat *st)
 {
-	return safe_stat(target, st, 0);
+#ifdef AT_NO_AUTOMOUNT
+	return fstatat(AT_FDCWD, target, st, AT_NO_AUTOMOUNT | AT_SYMLINK_NOFOLLOW);
+#else
+	return lstat(target, st);
+#endif
 }
 
-int mnt_safe_lstat(const char *target, struct stat *st)
-{
-	return safe_stat(target, st, 1);
-}
-
-/* Don't use access() or stat() here, we need a way how to check the path
- * without trigger an automount or hangs on NFS, etc. */
-int mnt_is_path(const char *target)
-{
-	struct stat st;
-
-	return safe_stat(target, &st, 0) == 0;
-}
 
 /*
  * Note that the @target has to be an absolute path (so at least "/").  The
@@ -340,7 +294,6 @@ int mnt_fstype_is_pseudofs(const char *type)
 		"none",
 		"nsfs",
 		"overlay",
-		"pidfs",
 		"pipefs",
 		"proc",
 		"pstore",
@@ -527,7 +480,7 @@ static int add_filesystem(char ***filesystems, char *name)
 
 	if (n == 0 || !((n + 1) % MYCHUNK)) {
 		size_t items = ((n + 1 + MYCHUNK) / MYCHUNK) * MYCHUNK;
-		char **x = reallocarray(*filesystems, items, sizeof(char *));
+		char **x = realloc(*filesystems, items * sizeof(char *));
 
 		if (!x)
 			goto err;
@@ -1033,7 +986,7 @@ int mnt_open_uniq_filename(const char *filename, char **name)
 
 	rc = asprintf(&n, "%s.XXXXXX", filename);
 	if (rc <= 0)
-		return -ENOMEM;
+		return -errno;
 
 	/* This is for very old glibc and for compatibility with Posix, which says
 	 * nothing about mkstemp() mode. All sane glibc use secure mode (0600).
@@ -1082,7 +1035,7 @@ char *mnt_get_mountpoint(const char *path)
 	if (*mnt == '/' && *(mnt + 1) == '\0')
 		goto done;
 
-	if (mnt_safe_stat(mnt, &st))
+	if (mnt_stat_mountpoint(mnt, &st))
 		goto err;
 	base = st.st_dev;
 
@@ -1091,7 +1044,7 @@ char *mnt_get_mountpoint(const char *path)
 
 		if (!p)
 			break;
-		if (mnt_safe_stat(*mnt ? mnt : "/", &st))
+		if (mnt_stat_mountpoint(*mnt ? mnt : "/", &st))
 			goto err;
 		dir = st.st_dev;
 		if (dir != base) {
@@ -1135,7 +1088,7 @@ char *mnt_get_kernel_cmdline_option(const char *name)
 	int val = 0;
 	char *p, *res = NULL, *mem = NULL;
 	char buf[BUFSIZ];	/* see kernel include/asm-generic/setup.h: COMMAND_LINE_SIZE */
-	const char *path;
+	const char *path = _PATH_PROC_CMDLINE;
 
 	if (!name || !name[0])
 		return NULL;
@@ -1144,8 +1097,6 @@ char *mnt_get_kernel_cmdline_option(const char *name)
 	path = getenv("LIBMOUNT_KERNEL_CMDLINE");
 	if (!path)
 		path = _PATH_PROC_CMDLINE;
-#else
-	path = _PATH_PROC_CMDLINE;
 #endif
 	f = fopen(path, "r" UL_CLOEXECSTR);
 	if (!f)
@@ -1290,12 +1241,8 @@ done:
 }
 
 #ifdef TEST_PROGRAM
-static int test_match_fstype(struct libmnt_test *ts __attribute__((unused)),
-			     int argc, char *argv[])
+static int test_match_fstype(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 3)
-		return -1;
-
 	char *type = argv[1];
 	char *pattern = argv[2];
 
@@ -1303,12 +1250,8 @@ static int test_match_fstype(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_match_options(struct libmnt_test *ts __attribute__((unused)),
-			      int argc, char *argv[])
+static int test_match_options(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 3)
-		return -1;
-
 	char *optstr = argv[1];
 	char *pattern = argv[2];
 
@@ -1316,12 +1259,8 @@ static int test_match_options(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_startswith(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int test_startswith(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 3)
-		return -1;
-
 	char *optstr = argv[1];
 	char *pattern = argv[2];
 
@@ -1329,12 +1268,8 @@ static int test_startswith(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_endswith(struct libmnt_test *ts __attribute__((unused)),
-			 int argc, char *argv[])
+static int test_endswith(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 3)
-		return -1;
-
 	char *optstr = argv[1];
 	char *pattern = argv[2];
 
@@ -1342,12 +1277,8 @@ static int test_endswith(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_mountpoint(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int test_mountpoint(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 2)
-		return -1;
-
 	char *path = canonicalize_path(argv[1]),
 	     *mnt = path ? mnt_get_mountpoint(path) :  NULL;
 
@@ -1357,17 +1288,13 @@ static int test_mountpoint(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_filesystems(struct libmnt_test *ts __attribute__((unused)),
-			    int argc, char *argv[])
+static int test_filesystems(struct libmnt_test *ts, int argc, char *argv[])
 {
 	char **filesystems = NULL;
 	int rc;
 
-	if (argc != 1 && argc != 2)
-		return -1;
-
-	rc = mnt_get_filesystems(&filesystems, argc == 2 ? argv[1] : NULL);
-	if (!rc && filesystems) {
+	rc = mnt_get_filesystems(&filesystems, argc ? argv[1] : NULL);
+	if (!rc) {
 		char **p;
 		for (p = filesystems; *p; p++)
 			printf("%s\n", *p);
@@ -1376,12 +1303,8 @@ static int test_filesystems(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_chdir(struct libmnt_test *ts __attribute__((unused)),
-		      int argc, char *argv[])
+static int test_chdir(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 2)
-		return -1;
-
 	int rc;
 	char *path = canonicalize_path(argv[1]),
 	     *last = NULL;
@@ -1399,12 +1322,8 @@ static int test_chdir(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_kernel_cmdline(struct libmnt_test *ts __attribute__((unused)),
-			       int argc, char *argv[])
+static int test_kernel_cmdline(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 2)
-		return -1;
-
 	char *name = argv[1];
 	char *res;
 
@@ -1422,8 +1341,7 @@ static int test_kernel_cmdline(struct libmnt_test *ts __attribute__((unused)),
 }
 
 
-static int test_guess_root(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int test_guess_root(struct libmnt_test *ts, int argc, char *argv[])
 {
 	int rc;
 	char *real;
@@ -1449,13 +1367,9 @@ static int test_guess_root(struct libmnt_test *ts __attribute__((unused)),
 	return 0;
 }
 
-static int test_mkdir(struct libmnt_test *ts __attribute__((unused)),
-	 	      int argc, char *argv[])
+static int test_mkdir(struct libmnt_test *ts, int argc, char *argv[])
 {
 	int rc;
-
-	if (argc != 2)
-		return -1;
 
 	rc = ul_mkdir_p(argv[1], S_IRWXU |
 			 S_IRGRP | S_IXGRP |
@@ -1465,14 +1379,10 @@ static int test_mkdir(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int test_statfs_type(struct libmnt_test *ts __attribute__((unused)),
-			    int argc, char *argv[])
+static int test_statfs_type(struct libmnt_test *ts, int argc, char *argv[])
 {
 	struct statfs vfs;
 	int rc;
-
-	if (argc != 2)
-		return -1;
 
 	rc = statfs(argv[1], &vfs);
 	if (rc)
@@ -1484,12 +1394,8 @@ static int test_statfs_type(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int tests_parse_uid(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int tests_parse_uid(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 2)
-		return -1;
-
 	char *str = argv[1];
 	uid_t uid = (uid_t) -1;
 	int rc;
@@ -1503,12 +1409,8 @@ static int tests_parse_uid(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int tests_parse_gid(struct libmnt_test *ts __attribute__((unused)),
-			   int argc, char *argv[])
+static int tests_parse_gid(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 2)
-		return -1;
-
 	char *str = argv[1];
 	gid_t gid = (gid_t) -1;
 	int rc;
@@ -1522,12 +1424,8 @@ static int tests_parse_gid(struct libmnt_test *ts __attribute__((unused)),
 	return rc;
 }
 
-static int tests_parse_mode(struct libmnt_test *ts __attribute__((unused)),
-			    int argc, char *argv[])
+static int tests_parse_mode(struct libmnt_test *ts, int argc, char *argv[])
 {
-	if (argc != 2)
-		return -1;
-
 	char *str = argv[1];
 	mode_t mod = (mode_t) -1;
 	int rc;
@@ -1540,36 +1438,6 @@ static int tests_parse_mode(struct libmnt_test *ts __attribute__((unused)),
 
 		xstrmode(mod, modstr);
 		printf("'%s' --> %04o [%s]\n", str, (unsigned int) mod, modstr);
-	}
-	return rc;
-}
-
-static int tests_stat(struct libmnt_test *ts __attribute__((unused)),
-		      int argc, char *argv[])
-{
-	if (argc != 2)
-		return -1;
-
-	char *path = argv[1];
-	struct stat st;
-	int rc;
-
-	if (strcmp(argv[0], "--lstat") == 0)
-		rc = mnt_safe_lstat(path, &st);
-	else
-		rc = mnt_safe_stat(path, &st);
-	if (rc)
-		printf("%s: failed: rc=%d: %m\n", path, rc);
-	else {
-		printf("%s: \n", path);
-		printf(" S_ISDIR: %s\n", S_ISDIR(st.st_mode) ? "y" : "n");
-		printf(" S_ISREG: %s\n", S_ISREG(st.st_mode) ? "y" : "n");
-		printf(" S_IFLNK: %s\n", S_ISLNK(st.st_mode) ? "y" : "n");
-
-		printf("   devno: %lu (%d:%d)\n", (unsigned long) st.st_dev,
-					  major(st.st_dev), minor(st.st_dev));
-		printf("     ino: %lu\n", (unsigned long) st.st_ino);
-
 	}
 	return rc;
 }
@@ -1591,8 +1459,6 @@ int main(int argc, char *argv[])
 	{ "--parse-uid",     tests_parse_uid,      "<username|uid>" },
 	{ "--parse-gid",     tests_parse_gid,      "<groupname|gid>" },
 	{ "--parse-mode",    tests_parse_mode,     "<number>" },
-	{ "--stat",          tests_stat,           "<path>" },
-	{ "--lstat",         tests_stat,           "<path>" },
 	{ NULL }
 	};
 

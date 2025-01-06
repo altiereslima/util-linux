@@ -11,7 +11,6 @@
 #define _LIBFDISK_PRIVATE_H
 
 #include <errno.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -287,7 +286,7 @@ enum {
 struct fdisk_label {
 	const char		*name;		/* label name */
 	enum fdisk_labeltype	id;		/* FDISK_DISKLABEL_* */
-	const struct fdisk_parttype *parttypes;	/* supported partitions types */
+	struct fdisk_parttype	*parttypes;	/* supported partitions types */
 	size_t			nparttypes;	/* number of items in parttypes[] */
 
 	const struct fdisk_shortcut *parttype_cuts;	/* partition type shortcuts */
@@ -301,8 +300,8 @@ struct fdisk_label {
 	struct fdisk_geometry	geom_min;	/* minimal geometry */
 	struct fdisk_geometry	geom_max;	/* maximal geometry */
 
-	bool			changed,	/* label has been modified */
-				disabled;	/* this driver is disabled at all */
+	unsigned int		changed:1,	/* label has been modified */
+				disabled:1;	/* this driver is disabled at all */
 
 	const struct fdisk_field *fields;	/* all possible fields */
 	size_t			nfields;
@@ -352,9 +351,9 @@ struct fdisk_ask {
 			uint64_t	base;		/* for relative results */
 			uint64_t	unit;		/* unit for offsets */
 			const char	*range;		/* by library generated list */
-			bool		relative,
-					inchars,
-					wrap_negative;
+			unsigned int	relative :1,
+					inchars  :1,
+					wrap_negative	:1;
 		} num;
 		/* FDISK_ASKTYPE_{WARN,WARNX,..} */
 		struct ask_print {
@@ -495,7 +494,7 @@ struct fdisk_labelitem {
 };
 
 /* Use only internally for non-allocated items, never use
- * refcounting for such items!
+ * refcouting for such items!
  */
 #define FDISK_LABELITEM_INIT	{ .type = 0, .refcount = 0 }
 

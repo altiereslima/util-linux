@@ -80,8 +80,6 @@ init
 	echo
 	echo userns expected: "$expected"
 	echo userns actual:   "$actual"
-	echo "$TS_CMD_LSNS":
-	LSNS_DEBUG=all "$TS_CMD_LSNS"
 	cleanup
 	exit $RESULT
     fi
@@ -94,19 +92,17 @@ init
 	echo
 	echo pidns expected: "$expected"
 	echo pidns actual:   "$actual"
-	echo "$TS_CMD_LSNS":
-	LSNS_DEBUG=all "$TS_CMD_LSNS"
 	cleanup
     fi
     exit $RESULT
-) >> $TS_ERRLOG 2>&1 &
+) &
 mainpid=$!
 (
     exec 4< $FIFO_WAIT
     $TS_CMD_UNSHARE --user --pid --mount-proc --fork bash -s > $FIFO_DATA <<'EOF'
     stat -c %i -L /proc/self/ns/user
     stat -c %i -L /proc/self/ns/pid
-    # Wait till FIFO_WAIT is closed.
+    # Wait till FIFO_WAIT is clsoed.
     read -u 4
 EOF
 ) &

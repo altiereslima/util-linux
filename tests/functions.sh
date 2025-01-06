@@ -77,9 +77,6 @@ function ts_report {
 
 function ts_check_test_command {
 	case "$1" in
-	"")
-		ts_failed "invalid test_command requested"
-		;;
 	*/*)
 		# paths
 		if [ ! -x "$1" ]; then
@@ -102,7 +99,6 @@ function ts_check_test_command {
 
 function ts_check_prog {
 	local cmd=$1
-	[ -z "$cmd" ] && ts_failed "invalid prog requested"
 	type "$cmd" >/dev/null 2>&1 || ts_skip "missing in PATH: $cmd"
 }
 
@@ -137,15 +133,6 @@ function ts_check_native_byteorder {
 	fi
 }
 
-function ts_check_enotty {
-	# https://lore.kernel.org/qemu-devel/20230426070659.80649-1-thomas@t-8ch.de/
-	if [ -e "$TS_HELPER_SYSINFO" ] &&
-		[ "$("$TS_HELPER_SYSINFO" enotty-ok)" = "0" ]; then
-
-		ts_skip "broken ENOTTY return"
-	fi
-}
-
 function ts_report_skip {
 	ts_report " SKIPPED ($1)"
 }
@@ -160,18 +147,6 @@ function ts_skip {
 function ts_skip_nonroot {
 	if [ $UID -ne 0 ]; then
 		ts_skip "no root permissions"
-	fi
-}
-
-# Specify the capability needed in your test case like:
-#
-#	ts_skip_capability cap_wake_alarm
-#
-function ts_skip_capability {
-	ts_check_test_command "$TS_HELPER_CAP"
-
-	if ! "$TS_HELPER_CAP" "$1"; then
-		ts_skip "no capability: $1"
 	fi
 }
 
@@ -295,10 +270,10 @@ function ts_init_core_subtest_env {
 	TS_EXPECTED_ERR="$TS_TOPDIR/expected/$TS_NS.err"
 	TS_MOUNTPOINT="$TS_OUTDIR/${TS_TESTNAME}-${TS_SUBNAME}-mnt"
 
-	rm -f "$TS_OUTPUT" "$TS_ERRLOG" "$TS_VGDUMP" "$TS_EXIT_CODE"
+	rm -f $TS_OUTPUT $TS_ERRLOG $TS_VGDUMP $TS_EXIT_CODE
 	[ -d "$TS_OUTDIR" ]  || mkdir -p "$TS_OUTDIR"
 
-	touch "$TS_OUTPUT" "$TS_ERRLOG" "$TS_EXIT_CODE"
+	touch $TS_OUTPUT $TS_ERRLOG $TS_EXIT_CODE
 	[ -n "$TS_VALGRIND_CMD" ] && touch $TS_VGDUMP
 }
 
@@ -398,7 +373,6 @@ function ts_init_env {
 		TS_ENABLE_UBSAN="yes"
 	fi
 
-	TS_FSTAB="$TS_OUTDIR/${TS_TESTNAME}.fstab"
 	BLKID_FILE="$TS_OUTDIR/${TS_TESTNAME}.blkidtab"
 
 	declare -a TS_SUID_PROGS
@@ -477,7 +451,7 @@ function ts_init_suid {
 	TS_SUID_USER[$ct]=$(stat --printf="%U" $PROG)
 	TS_SUID_GROUP[$ct]=$(stat --printf="%G" $PROG)
 
-	chown root:root $PROG &> /dev/null
+	chown root.root $PROG &> /dev/null
 	chmod u+s $PROG &> /dev/null
 }
 
@@ -542,19 +516,19 @@ function ts_gen_diff_from {
 	local output="$2"
 	local difffile="$3"
 
-	diff -u "$expected" "$output" > "$difffile"
+	diff -u $expected $output > $difffile
 
-	if [ $? -ne 0 ] || [ -s "$difffile" ]; then
+	if [ $? -ne 0 ] || [ -s $difffile ]; then
 		res=1
 		if [ "$TS_SHOWDIFF" == "yes" -a "$TS_KNOWN_FAIL" != "yes" ]; then
 			echo
 			echo "diff-{{{"
-			cat "$difffile"
+			cat $difffile
 			echo "}}}-diff"
 			echo
 		fi
 	else
-		rm -f "$difffile";
+		rm -f $difffile;
 	fi
 
 	return $res
@@ -569,8 +543,8 @@ function ts_gen_diff {
 	[ -f "$TS_EXPECTED" ] || TS_EXPECTED=/dev/null
 
 	# remove libtool lt- prefixes
-	sed --in-place 's/^lt\-\(.*\: \)/\1/g' "$TS_OUTPUT"
-	sed --in-place 's/^lt\-\(.*\: \)/\1/g' "$TS_ERRLOG"
+	sed --in-place 's/^lt\-\(.*\: \)/\1/g' $TS_OUTPUT
+	sed --in-place 's/^lt\-\(.*\: \)/\1/g' $TS_ERRLOG
 
 	[ -d "$TS_DIFFDIR" ] || mkdir -p "$TS_DIFFDIR"
 
@@ -579,10 +553,10 @@ function ts_gen_diff {
 	[ -f "$TS_ERRLOG" ] || TS_ERRLOG=/dev/null
 
 	if [ "$TS_COMPONENT" != "fuzzers" ]; then
-		ts_gen_diff_from "$TS_EXPECTED" "$TS_OUTPUT" "$TS_DIFF"
+		ts_gen_diff_from $TS_EXPECTED $TS_OUTPUT $TS_DIFF
 		status_out=$?
 
-		ts_gen_diff_from "$TS_EXPECTED_ERR" "$TS_ERRLOG" "$TS_DIFF.err"
+		ts_gen_diff_from $TS_EXPECTED_ERR $TS_ERRLOG $TS_DIFF.err
 		status_err=$?
 	else
 		# TS_EXIT_CODE is empty when tests aren't run with ts_run: https://github.com/util-linux/util-linux/issues/1072
@@ -593,8 +567,8 @@ function ts_gen_diff {
 		fi
 
 		if [ $exit_code -ne 0 ]; then
-			ts_gen_diff_from "$TS_EXPECTED" "$TS_OUTPUT" "$TS_DIFF"
-			ts_gen_diff_from "$TS_EXPECTED_ERR" "$TS_ERRLOG" "$TS_DIFF.err"
+			ts_gen_diff_from $TS_EXPECTED $TS_OUTPUT $TS_DIFF
+			ts_gen_diff_from $TS_EXPECTED_ERR $TS_ERRLOG $TS_DIFF.err
 		fi
 	fi
 
@@ -666,7 +640,7 @@ function ts_cleanup_on_exit {
 	for idx in $(seq 0 $((${#TS_SUID_PROGS[*]} - 1))); do
 		PROG=${TS_SUID_PROGS[$idx]}
 		chmod a-s $PROG &> /dev/null
-		chown ${TS_SUID_USER[$idx]}:${TS_SUID_GROUP[$idx]} $PROG &> /dev/null
+		chown ${TS_SUID_USER[$idx]}.${TS_SUID_GROUP[$idx]} $PROG &> /dev/null
 	done
 
 	for dev in "${TS_LOOP_DEVS[@]}"; do
@@ -788,21 +762,6 @@ function ts_device_has {
 	return $res
 }
 
-# Based on __SYSMACROS_DEFINE_MAKEDEV macro
-# defined in /usr/include/bits/sysmacros.h of GNU libc.
-function ts_makedev
-{
-	local major="$1"
-	local minor="$2"
-	local dev
-
-	dev=$((      ( major & 0x00000fff ) <<  8))
-	dev=$((dev | ( major & 0xfffff000 ) << 32))
-	dev=$((dev | ( minor & 0x000000ff ) <<  0))
-	dev=$((dev | ( minor & 0xffffff00 ) << 12))
-	echo $dev
-}
-
 function ts_is_uuid()
 {
 	printf "%s\n" "$1" | grep -E -q '^[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}$'
@@ -852,12 +811,12 @@ function ts_is_mounted {
 }
 
 function ts_fstab_open {
-	echo "# <!-- util-linux test entry" >> "$TS_FSTAB"
+	echo "# <!-- util-linux test entry" >> /etc/fstab
 }
 
 function ts_fstab_close {
-	echo "# -->" >> "$TS_FSTAB"
-	sync "$TS_FSTAB" 2>/dev/null
+	echo "# -->" >> /etc/fstab
+	sync /etc/fstab 2>/dev/null
 }
 
 function ts_fstab_addline {
@@ -866,7 +825,7 @@ function ts_fstab_addline {
 	local FS=${3:-"auto"}
 	local OPT=${4:-"defaults"}
 
-	echo "$SPEC   $MNT   $FS   $OPT   0   0" >> "$TS_FSTAB"
+	echo "$SPEC   $MNT   $FS   $OPT   0   0" >> /etc/fstab
 }
 
 function ts_fstab_lock {
@@ -890,9 +849,9 @@ function ts_fstab_clean {
   ba
 }
 s/# <!-- util-linux.*-->//;
-/^$/d" "$TS_FSTAB"
+/^$/d" /etc/fstab
 
-	sync "$TS_FSTAB" 2>/dev/null
+	sync /etc/fstab 2>/dev/null
 	ts_unlock "fstab"
 }
 
@@ -1165,39 +1124,4 @@ function ts_skip_exitcode_not_supported {
 	if [ $? -eq $TS_EXIT_NOTSUPP ]; then
 		ts_skip "functionality not implemented by system"
 	fi
-}
-
-function ts_inhibit_custom_colorscheme {
-	export XDG_CONFIG_HOME=/dev/null
-}
-
-function ts_is_virt {
-	type "systemd-detect-virt" >/dev/null 2>&1
-	if [ $? -ne 0 ]; then
-		return 1
-	fi
-
-	virt="$(systemd-detect-virt)"
-	for arg in "$@"; do
-		if [ "$virt" = "$arg" ]; then
-			return 0;
-		fi
-	done
-	return 1
-}
-
-function ts_check_enosys_syscalls {
-	ts_check_test_command "$TS_CMD_ENOSYS"
-	"$TS_CMD_ENOSYS" ${@/#/-s } true 2> /dev/null
-	[ $? -ne 0 ] && ts_skip "test_enosys does not work: $*"
-}
-
-function ts_skip_docker {
-	test -e /.dockerenv && ts_skip "unsupported in docker environment"
-}
-
-function ts_check_ipv6 {
-       if [ ! -e /proc/net/if_inet6 ]; then
-               ts_skip "IPv6 is not supported"
-       fi
 }

@@ -108,9 +108,6 @@
 #define _PATH_PROC_SETGROUPS	"/proc/self/setgroups"
 
 #define _PATH_PROC_FDDIR	"/proc/self/fd"
-#define _PATH_PROC_TIMENS_OFF   "/proc/self/timens_offsets"
-
-#define _PATH_PROC_OOM_ADJ	"/proc/self/oom_score_adj"
 
 #define _PATH_PROC_ATTR_CURRENT	"/proc/self/attr/current"
 #define _PATH_PROC_ATTR_EXEC	"/proc/self/attr/exec"
@@ -146,7 +143,7 @@
 
 #ifndef _PATH_DEV
   /*
-   * The trailing '/' in _PATH_DEV is there for compatibility with libc.
+   * The tailing '/' in _PATH_DEV is there for compatibility with libc.
    */
 # define _PATH_DEV		"/dev/"
 #endif
@@ -206,7 +203,6 @@
 /* sysctl fs paths */
 #define _PATH_PROC_SYS_FS	"/proc/sys/fs"
 #define _PATH_PROC_PIPE_MAX_SIZE	_PATH_PROC_SYS_FS "/pipe-max-size"
-#define _PATH_PROC_BINFMT_MISC	_PATH_PROC_SYS_FS "/binfmt_misc"
 
 /* irqtop paths */
 #define _PATH_PROC_INTERRUPTS	"/proc/interrupts"
@@ -230,17 +226,5 @@
 #define _PATH_DEV_RFKILL	"/dev/rfkill"
 #define _PATH_SYS_RFKILL	"/sys/class/rfkill"
 
-/* cgroup path */
-#define _PATH_SYS_CGROUP	"/sys/fs/cgroup"
-
-/* Maximum number of PIDs system supports */
-#define _PATH_PROC_PIDMAX	"/proc/sys/kernel/pid_max"
-
-/* econf path */
-#if USE_VENDORDIR
-# define UL_VENDORDIR_PATH      _PATH_VENDORDIR
-#else
-# define UL_VENDORDIR_PATH      NULL
-#endif
 
 #endif /* PATHNAMES_H */

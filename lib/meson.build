@@ -17,6 +17,7 @@ lib_common_sources = '''
 	mbsalign.c
 	mbsedit.c
 	md5.c
+	pager.c
 	procfs.c
 	pwdutils.c
 	randutils.c
@@ -36,7 +37,6 @@ md5_c = files('md5.c')
 sha1_c = files('sha1.c')
 strutils_c = files('strutils.c')
 strv_c = files('strv.c')
-pager_c = files('pager.c')
 
 lib_common_sources += [idcache_c,
                        randutils_c,

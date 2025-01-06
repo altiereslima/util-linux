@@ -19,17 +19,14 @@
 
 #include "mountP.h"
 #include "fileutils.h"
-#include "mount-api-utils.h"
+
+static int tmptgt_cleanup(int old_ns_fd);
 
 struct hookset_data {
 	char *subdir;
 	char *org_target;
 	int old_ns_fd;
-	int new_ns_fd;
-	unsigned int tmp_umounted : 1;
 };
-
-static int tmptgt_cleanup(struct hookset_data *);
 
 static void free_hookset_data(	struct libmnt_context *cxt,
 				const struct libmnt_hookset *hs)
@@ -39,7 +36,7 @@ static void free_hookset_data(	struct libmnt_context *cxt,
 	if (!hsd)
 		return;
 	if (hsd->old_ns_fd >= 0)
-		tmptgt_cleanup(hsd);
+		tmptgt_cleanup(hsd->old_ns_fd);
 
 	free(hsd->org_target);
 	free(hsd->subdir);
@@ -81,25 +78,27 @@ static int hookset_deinit(struct libmnt_context *cxt, const struct libmnt_hookse
  * Initialize MNT_PATH_TMPTGT; mkdir, create a new namespace and
  * mark (bind mount) the directory as private.
  */
-static int tmptgt_unshare(struct hookset_data *hsd)
+static int tmptgt_unshare(int *old_ns_fd)
 {
 #ifdef USE_LIBMOUNT_SUPPORT_NAMESPACES
-	int rc = 0;
+	int rc = 0, fd = -1;
 
-	hsd->old_ns_fd = hsd->new_ns_fd = -1;
+	assert(old_ns_fd);
 
-	/* create directory */
-	rc = ul_mkdir_p(MNT_PATH_TMPTGT, S_IRWXU);
-	if (rc)
-		goto fail;
+	*old_ns_fd = -1;
 
 	/* remember the current namespace */
-	hsd->old_ns_fd = open("/proc/self/ns/mnt", O_RDONLY | O_CLOEXEC);
-	if (hsd->old_ns_fd < 0)
+	fd = open("/proc/self/ns/mnt", O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
 		goto fail;
 
 	/* create new namespace */
 	if (unshare(CLONE_NEWNS) != 0)
+		goto fail;
+
+	/* create directory */
+	rc = ul_mkdir_p(MNT_PATH_TMPTGT, S_IRWXU);
+	if (rc)
 		goto fail;
 
 	/* try to set top-level directory as private, this is possible if
@@ -113,18 +112,14 @@ static int tmptgt_unshare(struct hookset_data *hsd)
 			goto fail;
 	}
 
-	/* remember the new namespace */
-	hsd->new_ns_fd = open("/proc/self/ns/mnt", O_RDONLY | O_CLOEXEC);
-	if (hsd->new_ns_fd < 0)
-		goto fail;
-
 	DBG(UTILS, ul_debug(MNT_PATH_TMPTGT " unshared"));
+	*old_ns_fd = fd;
 	return 0;
 fail:
 	if (rc == 0)
 		rc = errno ? -errno : -EINVAL;
 
-	tmptgt_cleanup(hsd);
+	tmptgt_cleanup(fd);
 	DBG(UTILS, ul_debug(MNT_PATH_TMPTGT " unshare failed"));
 	return rc;
 #else
@@ -135,23 +130,16 @@ fail:
 /*
  * Clean up MNT_PATH_TMPTGT; umount and switch back to old namespace
  */
-static int tmptgt_cleanup(struct hookset_data *hsd)
+static int tmptgt_cleanup(int old_ns_fd)
 {
 #ifdef USE_LIBMOUNT_SUPPORT_NAMESPACES
-	if (!hsd->tmp_umounted) {
-		umount(MNT_PATH_TMPTGT);
-		hsd->tmp_umounted = 1;
+	umount(MNT_PATH_TMPTGT);
+
+	if (old_ns_fd >= 0) {
+		setns(old_ns_fd, CLONE_NEWNS);
+		close(old_ns_fd);
 	}
 
-	if (hsd->new_ns_fd >= 0)
-		close(hsd->new_ns_fd);
-
-	if (hsd->old_ns_fd >= 0) {
-		setns(hsd->old_ns_fd, CLONE_NEWNS);
-		close(hsd->old_ns_fd);
-	}
-
-	hsd->new_ns_fd = hsd->old_ns_fd = -1;
 	DBG(UTILS, ul_debug(MNT_PATH_TMPTGT " cleanup done"));
 	return 0;
 #else
@@ -159,66 +147,40 @@ static int tmptgt_cleanup(struct hookset_data *hsd)
 #endif
 }
 
-/*
- * Attach (move) MNT_PATH_TMPTGT/subdir to the parental namespace.
- */
 static int do_mount_subdir(
 			struct libmnt_context *cxt,
-			struct hookset_data *hsd,
-			const char *root)
+			const char *root,
+			const char *subdir,
+			const char *target)
 {
 	int rc = 0;
-	const char *subdir = hsd->subdir;
-	const char *target;
 
 #ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-	struct libmnt_sysapi *api = mnt_context_get_sysapi(cxt);
+	struct libmnt_sysapi *api;
 
-	/* fallback only; necessary when hook_mount.c during preparation
-	 * cannot open the tree -- for example when we call /sbin/mount.<type> */
-	if (api && api->fd_tree < 0) {
-		api->fd_tree = mnt_context_open_tree(cxt, NULL, (unsigned long) -1);
-		if (api->fd_tree < 0)
-			return api->fd_tree;
-	}
-#endif
-	/* reset to the original mountpoint */
-	mnt_fs_set_target(cxt->fs, hsd->org_target);
-	target = mnt_fs_get_target(cxt->fs);
-
-#ifdef USE_LIBMOUNT_MOUNTFD_SUPPORT
-	if (api && api->fd_tree >= 0) {
+	api = mnt_context_get_sysapi(cxt);
+	if (api) {
 		/* FD based way - unfortunately, it's impossible to open
-		 * sub-directory on not-yet attached mount. It means
-		 * hook_mount.c attaches FS to temporary directory, and we
-		 * clone and move the subdir, and umount the old unshared
-		 * temporary tree.
+		 * sub-directory on not-yet attached mount. It means hook_mount.c
+		 * attaches to FS to temporary directory, and we clone
+		 * and move the subdir, and umount the old temporary tree.
 		 *
 		 * The old mount(2) way does the same, but by BIND.
 		 */
 		int fd;
 
-		DBG(HOOK, ul_debug("attach subdir '%s'", subdir));
+		DBG(HOOK, ul_debug("attach subdir  %s", subdir));
 		fd = open_tree(api->fd_tree, subdir,
 					OPEN_TREE_CLOEXEC | OPEN_TREE_CLONE);
-		mnt_context_syscall_save_status(cxt, "open_tree", fd >= 0);
+		set_syscall_status(cxt, "open_tree", fd >= 0);
 		if (fd < 0)
 			rc = -errno;
 
 		if (!rc) {
-			/* Note that the original parental namespace could be
-			 * private, in this case, it will not see our final mount,
-			 * so we need to move the the original namespace.
-			 */
-			setns(hsd->old_ns_fd, CLONE_NEWNS);
-
 			rc = move_mount(fd, "", AT_FDCWD, target, MOVE_MOUNT_F_EMPTY_PATH);
-			mnt_context_syscall_save_status(cxt, "move_mount", rc == 0);
+			set_syscall_status(cxt, "move_mount", rc == 0);
 			if (rc)
 				rc = -errno;
-
-			/* And move back to our private namespace to cleanup */
-			setns(hsd->new_ns_fd, CLONE_NEWNS);
 		}
 		if (!rc) {
 			close(api->fd_tree);
@@ -235,7 +197,8 @@ static int do_mount_subdir(
 		/* Classic mount(2) based way */
 		DBG(HOOK, ul_debug("mount subdir %s to %s", src, target));
 		rc = mount(src, target, NULL, MS_BIND, NULL);
-		mnt_context_syscall_save_status(cxt, "mount", rc == 0);
+
+		set_syscall_status(cxt, "mount", rc == 0);
 		if (rc)
 			rc = -errno;
 		free(src);
@@ -244,11 +207,9 @@ static int do_mount_subdir(
 	if (!rc) {
 		DBG(HOOK, ul_debug("umount old root %s", root));
 		rc = umount(root);
-		mnt_context_syscall_save_status(cxt, "umount", rc == 0);
+		set_syscall_status(cxt, "umount", rc == 0);
 		if (rc)
 			rc = -errno;
-		hsd->tmp_umounted = 1;
-
 	}
 
 	return rc;
@@ -267,12 +228,18 @@ static int hook_mount_post(
 	if (!hsd || !hsd->subdir)
 		return 0;
 
+	/* reset to the original mountpoint */
+	mnt_fs_set_target(cxt->fs, hsd->org_target);
+
 	/* bind subdir to the real target, umount temporary target */
-	rc = do_mount_subdir(cxt, hsd, MNT_PATH_TMPTGT);
+	rc = do_mount_subdir(cxt, MNT_PATH_TMPTGT,
+			hsd->subdir,
+			mnt_fs_get_target(cxt->fs));
 	if (rc)
 		return rc;
 
-	tmptgt_cleanup(hsd);
+	tmptgt_cleanup(hsd->old_ns_fd);
+	hsd->old_ns_fd = -1;
 
 	return rc;
 }
@@ -294,16 +261,13 @@ static int hook_mount_pre(
 	if (!hsd->org_target)
 		rc = -ENOMEM;
 	if (!rc)
-		rc = tmptgt_unshare(hsd);
+		rc = tmptgt_unshare(&hsd->old_ns_fd);
 	if (!rc)
 		mnt_fs_set_target(cxt->fs, MNT_PATH_TMPTGT);
 	if (!rc)
 		rc = mnt_context_append_hook(cxt, hs,
 				MNT_STAGE_MOUNT_POST,
 				NULL, hook_mount_post);
-
-	DBG(HOOK, ul_debugobj(hs, "unshared tmp target %s [rc=%d]",
-				MNT_PATH_TMPTGT, rc));
 	return rc;
 }
 

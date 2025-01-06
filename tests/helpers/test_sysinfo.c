@@ -24,26 +24,6 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <wchar.h>
-#include <errno.h>
-#include <time.h>
-#include <sys/ioctl.h>
-
-#ifdef __linux__
-# include <sys/mount.h>
-# include "mount-api-utils.h"
-#endif
-
-#ifdef HAVE_LINUX_NSFS_H
-# include <linux/nsfs.h>
-# if defined(NS_GET_NSTYPE) && defined(NS_GET_OWNER_UID)
-#  define USE_NS_GET_NSTYPE	1
-# endif
-# if defined(NS_GET_USERNS)
-#  define USE_NS_GET_USERNS	1
-# endif
-#endif
-
-#include "xalloc.h"
 
 typedef struct {
 	const char	*name;
@@ -119,65 +99,7 @@ static int hlp_wcsspn_ok(void)
 	return 0;
 }
 
-static int hlp_enotty_ok(void)
-{
-	errno = 0;
-	ioctl(STDOUT_FILENO, 0);
-
-	printf("%d\n", errno != ENOSYS);
-	return 0;
-}
-
-static int hlp_fsopen_ok(void)
-{
-#ifdef FSOPEN_CLOEXEC
-	errno = 0;
-	fsopen(NULL, FSOPEN_CLOEXEC);
-#else
-	errno = ENOSYS;
-#endif
-	printf("%d\n", errno != ENOSYS);
-	return 0;
-}
-
-static int hlp_sz_time(void)
-{
-	printf("%zu\n", sizeof(time_t));
-	return 0;
-}
-
-static int hlp_get_nstype_ok(void)
-{
-#ifdef USE_NS_GET_NSTYPE
-	errno = 0;
-	ioctl(STDOUT_FILENO, NS_GET_NSTYPE);
-#else
-	errno = ENOSYS;
-#endif
-	printf("%d\n", errno != ENOSYS);
-	return 0;
-}
-
-static int hlp_get_userns_ok(void)
-{
-#ifdef USE_NS_GET_USERNS
-	errno = 0;
-	ioctl(STDOUT_FILENO, NS_GET_USERNS);
-#else
-	errno = ENOSYS;
-#endif
-	printf("%d\n", errno != ENOSYS);
-	return 0;
-}
-
-static int hlp_hostname(void)
-{
-	char * h = xgethostname();
-	printf("%s\n", h);
-	return 0;
-}
-
-static const mntHlpfnc hlps[] =
+static mntHlpfnc hlps[] =
 {
 	{ "WORDSIZE",	hlp_wordsize	},
 	{ "pagesize",	hlp_pagesize	},
@@ -189,19 +111,13 @@ static const mntHlpfnc hlps[] =
 	{ "UINT64_MAX", hlp_u64_max     },
 	{ "byte-order", hlp_endianness  },
 	{ "wcsspn-ok",  hlp_wcsspn_ok   },
-	{ "enotty-ok",  hlp_enotty_ok   },
-	{ "fsopen-ok",  hlp_fsopen_ok   },
-	{ "sz(time_t)", hlp_sz_time     },
-	{ "ns-gettype-ok", hlp_get_nstype_ok },
-	{ "ns-getuserns-ok", hlp_get_userns_ok },
-	{ "hostname", hlp_hostname, },
 	{ NULL, NULL }
 };
 
 int main(int argc, char **argv)
 {
 	int re = 0;
-	const mntHlpfnc *fn;
+	mntHlpfnc *fn;
 
 	if (argc == 1) {
 		for (fn = hlps; fn->name; fn++) {
@@ -229,3 +145,4 @@ int main(int argc, char **argv)
 
 	exit(re ? EXIT_FAILURE : EXIT_SUCCESS);
 }
+

@@ -1,6 +1,4 @@
 /*
- * SPDX-License-Identifier: GPL-2.0-or-later
- *
  * cramfs_common - cramfs common code
  *
  * Copyright (c) 2008 Roy Peled, the.roy.peled  -at-  gmail
@@ -15,7 +13,9 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
  */
+
 #ifndef __CRAMFS_H
 #define __CRAMFS_H
 

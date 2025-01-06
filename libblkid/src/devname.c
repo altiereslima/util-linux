@@ -147,7 +147,7 @@ done:
 }
 
 /* Directories where we will try to search for device names */
-static const char *const dirlist[] = { "/dev", "/devfs", "/devices", NULL };
+static const char *dirlist[] = { "/dev", "/devfs", "/devices", NULL };
 
 /*
  * Return 1 if the device is a device-mapper 'leaf' node
@@ -177,7 +177,7 @@ static void probe_one(blkid_cache cache, const char *ptname,
 {
 	blkid_dev dev = NULL;
 	struct list_head *p, *pnext;
-	const char *const*dir;
+	const char **dir;
 	char *devname = NULL;
 
 	/* See if we already have this device number in the cache. */
@@ -359,7 +359,7 @@ exit:
 static void
 ubi_probe_all(blkid_cache cache, int only_if_new)
 {
-	const char *const*dirname;
+	const char **dirname;
 
 	for (dirname = dirlist; *dirname; dirname++) {
 		DIR		*dir;
@@ -544,7 +544,7 @@ static int probe_all(blkid_cache cache, int only_if_new, int update_interval)
 
 	rc = sysfs_probe_all(cache, only_if_new, 0);
 
-	/* Don't mark the change as "probed" if /sys not available */
+	/* Don't mark the change as "probed" if /sys not avalable */
 	if (update_interval && rc == 0) {
 		cache->bic_time = time(NULL);
 		cache->bic_flags |= BLKID_BIC_FL_PROBED;

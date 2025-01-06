@@ -11,7 +11,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <inttypes.h>
 
 #include "topology.h"
 
@@ -146,7 +145,6 @@ blkid_topology blkid_probe_get_topology(blkid_probe pr)
 static int topology_probe(blkid_probe pr, struct blkid_chain *chn)
 {
 	size_t i;
-	int rc;
 
 	if (chn->idx < -1)
 		return -1;
@@ -183,10 +181,7 @@ static int topology_probe(blkid_probe pr, struct blkid_chain *chn)
 
 		if (id->probefunc) {
 			DBG(LOWPROBE, ul_debug("%s: call probefunc()", id->name));
-			errno = 0;
-			rc = id->probefunc(pr, NULL);
-			blkid_probe_prune_buffers(pr);
-			if (rc != 0)
+			if (id->probefunc(pr, NULL) != 0)
 				continue;
 		}
 
@@ -213,7 +208,7 @@ static void topology_free(blkid_probe pr __attribute__((__unused__)),
 }
 
 static int topology_set_value(blkid_probe pr, const char *name,
-				size_t structoff, unsigned long data)
+				size_t structoff, unsigned long long data)
 {
 	struct blkid_chain *chn = blkid_probe_get_chain(pr);
 
@@ -226,24 +221,7 @@ static int topology_set_value(blkid_probe pr, const char *name,
 		memcpy((char *) chn->data + structoff, &data, sizeof(data));
 		return 0;
 	}
-	return blkid_probe_sprintf_value(pr, name, "%lu", data);
-}
-
-static int topology_set_value64(blkid_probe pr, const char *name,
-				size_t structoff, uint64_t data)
-{
-	struct blkid_chain *chn = blkid_probe_get_chain(pr);
-
-	if (!chn)
-		return -1;
-	if (!data)
-		return 0;	/* ignore zeros */
-
-	if (chn->binary) {
-		memcpy((char *) chn->data + structoff, &data, sizeof(data));
-		return 0;
-	}
-	return blkid_probe_sprintf_value(pr, name, "%"PRIu64, data);
+	return blkid_probe_sprintf_value(pr, name, "%llu", data);
 }
 
 
@@ -337,7 +315,7 @@ int blkid_topology_set_dax(blkid_probe pr, unsigned long val)
 
 int blkid_topology_set_diskseq(blkid_probe pr, uint64_t val)
 {
-	return topology_set_value64(pr,
+	return topology_set_value(pr,
 			"DISKSEQ",
 			offsetof(struct blkid_struct_topology, diskseq),
 			val);
