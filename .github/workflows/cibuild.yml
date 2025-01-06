@@ -35,9 +35,7 @@ jobs:
       - name: Ubuntu setup
         run: sudo -E .github/workflows/cibuild-setup-ubuntu.sh
       - name: Configure & Make
-        run: |
-          export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
-          .github/workflows/cibuild.sh CONFIGURE MAKE
+        run: .github/workflows/cibuild.sh CONFIGURE MAKE
       - name: Check
         run: sudo -E .github/workflows/cibuild.sh CHECK
       - name: Make install
@@ -60,13 +58,11 @@ jobs:
       - name: Ubuntu setup
         run: sudo -E .github/workflows/cibuild-setup-ubuntu.sh
       - name: Configure & Make
-        run: |
-          export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
-          .github/workflows/cibuild.sh CONFIGURE MAKE
+        run: .github/workflows/cibuild.sh CONFIGURE MAKE
       - name: Check
         run: sudo -E .github/workflows/cibuild.sh CHECK
       - name: Coveralls
-        uses: coverallsapp/github-action@v4
+        uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path-to-lcov: ./coverage.info
@@ -84,13 +80,9 @@ jobs:
       - name: Ubuntu setup
         run: sudo -E .github/workflows/cibuild-setup-ubuntu.sh
       - name: Meson configure
-        run: |
-          export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
-          .github/workflows/cibuild.sh MESONCONF
+        run: .github/workflows/cibuild.sh MESONCONF
       - name: Meson build
-        run: |
-          export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
-          .github/workflows/cibuild.sh MESONBUILD
+        run: .github/workflows/cibuild.sh MESONBUILD
 
   distcheck:
     needs: build
@@ -105,13 +97,9 @@ jobs:
       - name: Ubuntu setup
         run: sudo -E .github/workflows/cibuild-setup-ubuntu.sh
       - name: Configure
-        run: |
-          export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
-          .github/workflows/cibuild.sh CONFIGURE
+        run: .github/workflows/cibuild.sh CONFIGURE
       - name: Make distcheck
-        run: |
-          export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
-          .github/workflows/cibuild.sh DISTCHECK
+        run: .github/workflows/cibuild.sh DISTCHECK
 
   build-s390x:
     runs-on: ubuntu-latest
@@ -127,7 +115,6 @@ jobs:
             export COMPILER_VERSION=10
             export SANITIZE=no
             export QEMU_USER=1
-            export CFLAGS="-Wno-error=unused-variable -Wno-error=unused-function"
 
             # name: Ubuntu setup
             .github/workflows/cibuild-setup-ubuntu.sh
